@@ -204,12 +204,12 @@ function _calc_Q!(Q::TO.StaticExpansion, Sxx, Sx, fdx::SMatrix, fdu::SMatrix)
 end
 
 
-function _calc_gains!(K::SizedArray, d::SizedArray, Quu::SizedArray, Qux::SizedArray, Qu)
-	LAPACK.potrf!('U',Quu.data)
+function _calc_gains!(K, d, Quu, Qux, Qu)
+	LAPACK.potrf!('U', Quu)
 	K .= Qux
 	d .= Qu
-	LAPACK.potrs!('U', Quu.data, K.data)
-	LAPACK.potrs!('U', Quu.data, d.data)
+	LAPACK.potrs!('U', Quu, K)
+	LAPACK.potrs!('U', Quu, d)
 	K .*= -1
 	d .*= -1
 	# return K,d
