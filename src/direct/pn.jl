@@ -1,7 +1,7 @@
-struct DynamicsVals{T,N,A}
-    fVal::Vector{SVector{N,T}}
-    xMid::Vector{SVector{N,T}}
-    ∇f::Vector{A}
+struct DynamicsVals{T}
+    fVal::Vector{Vector{T}}
+    xMid::Vector{Vector{T}}
+    ∇f::AbstractVector
 end
 
 function DynamicsVals(dyn_con::DynamicsConstraint)
@@ -12,13 +12,13 @@ struct ProblemInfo{T,N}
     model::AbstractModel
     obj::Objective
     conSet::ALConstraintSet{T}
-    x0::SVector{N,T}
-    xf::SVector{N,T}
+    x0::Vector{T}
+    xf::Vector{T}
 end
 
-function ProblemInfo(prob::Problem)
+function ProblemInfo(prob::Problem{Q,T}) where {Q, T}
     n = size(prob)[1]
-    ProblemInfo(prob.model, prob.obj, ALConstraintSet(prob), SVector{n}(prob.x0), SVector{n}(prob.xf))
+    ProblemInfo{T,n}(prob.model, prob.obj, ALConstraintSet(prob), prob.x0, prob.xf)
 end
 
 
@@ -34,8 +34,8 @@ This solver is to be used exlusively for solutions that are close to the optimal
 struct ProjectedNewtonSolver{T,N,M,NM} <: ConstrainedSolver{T}
     # Problem Info
     prob::ProblemInfo{T,N}
-    Z::Traj{N,M,T,KnotPoint{T,N,M,NM}}
-    Z̄::Traj{N,M,T,KnotPoint{T,N,M,NM}}
+    Z::Traj{N,M,T,KnotPoint{T,N,M}}
+    Z̄::Traj{N,M,T,KnotPoint{T,N,M}}
 
     opts::SolverOptions{T}
     stats::SolverStats{T}
@@ -54,12 +54,12 @@ struct ProjectedNewtonSolver{T,N,M,NM} <: ConstrainedSolver{T}
     dyn_vals::DynamicsVals{T}
     active_set::Vector{Bool}
 
-    dyn_inds::Vector{SVector{N,Int}}
+    dyn_inds::Vector{Int}
     con_inds::Vector{<:Vector}
 end
 
-function ProjectedNewtonSolver(prob::Problem, 
-        opts::SolverOptions=SolverOptions(), stats::SolverStats=SolverStats())
+function ProjectedNewtonSolver(prob::Problem{Q,T}, 
+        opts::SolverOptions=SolverOptions(), stats::SolverStats=SolverStats()) where {Q,T}
     Z = prob.Z  # grab trajectory before copy to keep associativity
     prob = copy(prob)  # don't modify original problem
 
@@ -89,10 +89,10 @@ function ProjectedNewtonSolver(prob::Problem,
     d = zeros(NP)
     λ = zeros(NP)
 
-    fVal = [@SVector zeros(n) for k = 1:N]
-    xMid = [@SVector zeros(n) for k = 1:N-1]
-    ∇F = [@SMatrix zeros(n,n+m+1) for k = 1:N]
-    dyn_vals = DynamicsVals(fVal, xMid, ∇F)
+    fVal = [zeros(n) for k = 1:N]
+    xMid = [zeros(n) for k = 1:N-1]
+    ∇F = [zeros(n,n+m+1) for k = 1:N]
+    dyn_vals = DynamicsVals{T}(fVal, xMid, ∇F)
     active_set = zeros(Bool,NP)
 
     con_inds = gen_con_inds(conSet)
@@ -100,9 +100,11 @@ function ProjectedNewtonSolver(prob::Problem,
     # Set constant pieces of the Jacobian
     xinds,uinds = P.xinds, P.uinds
 
-    dyn_inds = SVector{n,Int}[]
-    ProjectedNewtonSolver(prob_info, Z, Z̄, opts, stats,
-        P, P̄, H, g, E, D, d, λ, dyn_vals, active_set, dyn_inds, con_inds)
+    dyn_inds = zeros(Int, n)
+    ProjectedNewtonSolver{T,n,m,n+m}(
+        prob_info, Z, Z̄, opts, stats, P, P̄, H, g, E, D, d, λ, dyn_vals,
+        active_set, dyn_inds, con_inds
+    )
 end
 
 primals(solver::ProjectedNewtonSolver) = solver.P.Z

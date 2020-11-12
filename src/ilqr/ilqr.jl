@@ -5,8 +5,8 @@ struct iLQRSolver{T,I<:QuadratureRule,L,O,n,n̄,m,L1} <: UnconstrainedSolver{T}
     obj::O
 
     # Problem info
-    x0::MVector{n,T}
-    xf::MVector{n,T}
+    x0::AbstractVector
+    xf::AbstractVector
     tf::T
     N::Int
 
@@ -14,23 +14,25 @@ struct iLQRSolver{T,I<:QuadratureRule,L,O,n,n̄,m,L1} <: UnconstrainedSolver{T}
     stats::SolverStats{T}
 
     # Primal Duals
-    Z::Traj{n,m,T,KnotPoint{T,n,m,L1}}
-    Z̄::Traj{n,m,T,KnotPoint{T,n,m,L1}}
+    Z::Traj{n,m,T,KnotPoint{T,n,m}}
+    Z̄::Traj{n,m,T,KnotPoint{T,n,m}}
 
     # Data variables
     # K::Vector{SMatrix{m,n̄,T,L2}}  # State feedback gains (m,n,N-1)
-    K::Vector{SizedMatrix{m,n̄,T,2}}  # State feedback gains (m,n,N-1)
-    d::Vector{SizedVector{m,T,1}}  # Feedforward gains (m,N-1)
+    K::AbstractVector  # State feedback gains (m,n,N-1)
+    d::AbstractVector  # Feedforward gains (m,N-1)
 
     D::Vector{DynamicsExpansion{T,n,n̄,m}}  # discrete dynamics jacobian (block) (n,n+m+1,N)
-    G::Vector{SizedMatrix{n,n̄,T,2}}        # state difference jacobian (n̄, n)
+    G::AbstractVector # state difference jacobian (n̄, n)
 
 	quad_obj::QuadraticObjective{n,m,T}  # quadratic expansion of obj
 	S::QuadraticObjective{n̄,m,T}         # Cost-to-go expansion
 	Q::QuadraticObjective{n̄,m,T}         # Action-value expansion
 
-	Quu_reg::SizedMatrix{m,m,T,2}
-	Qux_reg::SizedMatrix{m,n̄,T,2}
+    Q_tmp::TO.QuadraticCost{n̄,m,T,Matrix{T},Matrix{T}}
+	Quu_reg::Matrix{T}
+	Qux_reg::Matrix{T}
+
     ρ::Vector{T}   # Regularization
     dρ::Vector{T}  # Regularization rate of change
 
@@ -63,14 +65,14 @@ function iLQRSolver(
     d = [zeros(T,m)   for k = 1:N-1]
 
 	D = [DynamicsExpansion{T}(n,n̄,m) for k = 1:N-1]
-	G = [SizedMatrix{n,n̄}(zeros(n,n̄)) for k = 1:N+1]  # add one to the end to use as an intermediate result
+	G = [zeros(n,n̄) for k = 1:N+1]  # add one to the end to use as an intermediate result
 
 	Q = QuadraticObjective(n̄,m,N)
 	quad_exp = QuadraticObjective(Q, prob.model)
 	S = QuadraticObjective(n̄,m,N)
 
-	Quu_reg = SizedMatrix{m,m}(zeros(m,m))
-	Qux_reg = SizedMatrix{m,n̄}(zeros(m,n̄))
+	Quu_reg = zeros(m,m)
+	Qux_reg = zeros(m,n̄)
     ρ = zeros(T,1)
     dρ = zeros(T,1)
 
