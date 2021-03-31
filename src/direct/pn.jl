@@ -1,3 +1,6 @@
+using RobotDynamics
+const RD = RobotDynamics
+
 struct DynamicsVals{T}
     fVal::Vector{Vector{T}}
     xMid::Vector{Vector{T}}
@@ -31,11 +34,11 @@ Achieves machine-level constraint satisfaction by projecting onto the feasible s
 This solver is to be used exlusively for solutions that are close to the optimal solution.
     It is intended to be used as a "solution polishing" method for augmented Lagrangian methods.
 """
-struct ProjectedNewtonSolver{T,N,M,NM} <: ConstrainedSolver{T}
+struct ProjectedNewtonSolver{T,N,M,NM,V} <: ConstrainedSolver{T}
     # Problem Info
     prob::ProblemInfo{T,N}
-    Z::Traj{N,M,T,KnotPoint{T,N,M}}
-    Z̄::Traj{N,M,T,KnotPoint{T,N,M}}
+    Z::Traj{N,M,T,RD.GeneralKnotPoint{T,N,M,V}}
+    Z̄::Traj{N,M,T,RD.GeneralKnotPoint{T,N,M,V}}
 
     opts::SolverOptions{T}
     stats::SolverStats{T}
@@ -61,6 +64,7 @@ end
 function ProjectedNewtonSolver(prob::Problem{Q,T}, 
         opts::SolverOptions=SolverOptions(), stats::SolverStats=SolverStats()) where {Q,T}
     Z = prob.Z  # grab trajectory before copy to keep associativity
+    
     prob = copy(prob)  # don't modify original problem
 
     n,m,N = size(prob)
@@ -101,7 +105,8 @@ function ProjectedNewtonSolver(prob::Problem{Q,T},
     xinds,uinds = P.xinds, P.uinds
 
     dyn_inds = zeros(Int, n)
-    ProjectedNewtonSolver{T,n,m,n+m}(
+    V = CuVector{T}
+    ProjectedNewtonSolver{T,n,m,n+m,V}(
         prob_info, Z, Z̄, opts, stats, P, P̄, H, g, E, D, d, λ, dyn_vals,
         active_set, dyn_inds, con_inds
     )

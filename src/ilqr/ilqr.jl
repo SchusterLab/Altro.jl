@@ -1,5 +1,6 @@
+using CUDA
 
-struct iLQRSolver{T,I<:QuadratureRule,L,O,n,n̄,m,L1} <: UnconstrainedSolver{T}
+struct iLQRSolver{T,I<:QuadratureRule,L,O,n,n̄,m,L1,V} <: UnconstrainedSolver{T}
     # Model + Objective
     model::L
     obj::O
@@ -14,8 +15,8 @@ struct iLQRSolver{T,I<:QuadratureRule,L,O,n,n̄,m,L1} <: UnconstrainedSolver{T}
     stats::SolverStats{T}
 
     # Primal Duals
-    Z::Traj{n,m,T,KnotPoint{T,n,m}}
-    Z̄::Traj{n,m,T,KnotPoint{T,n,m}}
+    Z::Traj{n,m,T,RobotDynamics.GeneralKnotPoint{T,n,m,V}}
+    Z̄::Traj{n,m,T,RobotDynamics.GeneralKnotPoint{T,n,m,V}}
 
     # Data variables
     # K::Vector{SMatrix{m,n̄,T,L2}}  # State feedback gains (m,n,N-1)
@@ -58,7 +59,6 @@ function iLQRSolver(
     xf = prob.xf
 
     Z = prob.Z
-    # Z̄ = Traj(n,m,Z[1].dt,N)
     Z̄ = copy(prob.Z)
 
 	K = [zeros(T,m,n̄) for k = 1:N-1]
@@ -83,7 +83,8 @@ function iLQRSolver(
     logger = SolverLogging.default_logger(opts.verbose >= 2)
 	L = typeof(prob.model)
 	O = typeof(prob.obj)
-    solver = iLQRSolver{T,QUAD,L,O,n,n̄,m,n+m}(prob.model, prob.obj, x0, xf,
+    V = CuVector{T}
+    solver = iLQRSolver{T,QUAD,L,O,n,n̄,m,n+m,V}(prob.model, prob.obj, x0, xf,
 		prob.tf, N, opts, stats,
         Z, Z̄, K, d, D, G, quad_exp, S, Q, Q_tmp, Quu_reg, Qux_reg, ρ, dρ, grad, logger)
 
