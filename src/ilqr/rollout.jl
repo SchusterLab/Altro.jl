@@ -1,38 +1,49 @@
+"""
+rollout.jl
+"""
 
-function rollout!(solver::iLQRSolver{T,Q,n}, α) where {T,Q,n}
-    Z = solver.Z; Z̄ = solver.Z̄
-    K = solver.K; d = solver.d;
+function rollout!(solver::iLQRSolver{IR}, α) where {IR}
+    N = solver.N
+    X = solver.X
+    U = solver.U
+    X_tmp = solver.X_tmp
+    U_tmp = solver.U_tmp
+    δx = solver.X_tmp[N + 1]
+    δu = solver.U_tmp[N]
+    ts = solver.ts
+    K = solver.K
+    d = solver.d;
+    stage_cost = solver.obj.stage_cost
+    terminal_cost = solver.obj.terminal_cost
+    J = 0.
 
-    Z̄[1].z = [solver.x0; control(Z[1])]
-
-    temp = 0.0
-	δx = solver.S[end].q
-	δu = solver.S[end].r
-
-    for k = 1:solver.N-1
-        δx .= RobotDynamics.state_diff(solver.model, state(Z̄[k]), state(Z[k]))
-		δu .= d[k] .* α
-		mul!(δu, K[k], δx, 1.0, 1.0)
-        ū = control(Z[k]) + δu
-        RobotDynamics.set_control!(Z̄[k], ū)
-
-        # Z̄[k].z = [state(Z̄[k]); control(Z[k]) + δu]
-        Z̄[k+1].z = [RobotDynamics.discrete_dynamics(Q, solver.model, Z̄[k]);
-            control(Z[k+1])]
-
-        max_x = norm(state(Z̄[k+1]),Inf)
+    X_tmp[1] .= X[1]
+    for k = 1:N-1
+        # handle feedforward
+        dt = ts[k + 1] - ts[k]
+        δx .= RobotDynamics.state_diff(solver.model, X_tmp[k], X[k])
+	δu .= d[k] .* α
+	mul!(δu, K[k], δx, 1., 1.)
+        U_tmp[k] .= U[k] + δu
+        X_tmp[k + 1] .= RobotDynamics.discrete_dynamics(IR, solver.model, X_tmp[k],
+                                                        U_tmp[k], ts[k], dt)
+        # compute cost
+        J += TrajectoryOptimization.stage_cost(stage_cost, X_tmp[k], U_tmp[k])
+        # report state or control blowup
+        max_x = norm(X_tmp[k + 1], Inf)
         if max_x > solver.opts.max_state_value || isnan(max_x)
             solver.stats.status = STATE_LIMIT
-            return false
+            return 0., false
         end
-        max_u = norm(control(Z̄[k+1]),Inf)
+        max_u = norm(U_tmp[k], Inf)
         if max_u > solver.opts.max_control_value || isnan(max_u)
             solver.stats.status = CONTROL_LIMIT 
-            return false
+            return 0., false
         end
     end
+    J += TrajectoryOptimization.stage_cost(terminal_cost, X_tmp[N])
     solver.stats.status = UNSOLVED
-    return true
+    return J, true
 end
 
 "Simulate the forward the dynamics open-loop"

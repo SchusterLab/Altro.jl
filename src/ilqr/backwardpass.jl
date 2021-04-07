@@ -1,73 +1,103 @@
+"""
+backwardpass.jl
+"""
 
 """
 Calculates the optimal feedback gains K,d as well as the 2nd Order approximation of the
 Cost-to-Go, using a backward Riccati-style recursion. (non-allocating)
 """
-function backwardpass!(solver::iLQRSolver{T,QUAD,L,O,n,n̄,m}) where {T,QUAD<:QuadratureRule,L,O,n,n̄,m}
-	N = solver.N
-
-    # Objective
-    obj = solver.obj
+function backwardpass!(solver::iLQRSolver{IR}) where {IR<:QuadratureRule}
+    # initialize
     model = solver.model
-
-    # Extract variables
-    Z = solver.Z; K = solver.K; d = solver.d;
+    stage_cost = solver.obj.stage_cost
+    terminal_cost = solver.obj.terminal_cost
+    ix = solver.ix
+    iu = solver.iu
+    X = solver.X
+    U = solver.U
+    ts = solver.ts
+    N = solver.N
+    K = solver.K
+    d = solver.d
+    D = solver.D
+    A = solver.A
+    B = solver.B
     G = solver.G
-    S = solver.S
-	Quu_reg = solver.Quu_reg
-	Qux_reg = solver.Qux_reg
+    E = solver.E
+    Qxx = solver.Qxx
+    Quu = solver.Quu
+    Quu_reg = solver.Quu_reg
+    Qux = solver.Qux
+    Qux_reg = solver.Qux_reg
+    Qx = solver.Qx
+    Qu = solver.Qu
+    P = solver.P
+    P_ = solver.P_
+    p = solver.p
+    p_ = solver.p_
+    ΔV = solver.ΔV
+    J = 0
 
-    # Terminal cost-to-go
-	Q = solver.Q[N]
-    S[N].Q .= Q.Q
-    S[N].q .= Q.q
+    # compute cost
+    for k = 1:N-1
+        # cost
+        J += TO.stage_cost(stage_cost, X[k], U[k])
+    end
+    J += TO.stage_cost(terminal_cost, X[N])
 
-    # Initialize expecte change in cost-to-go
-    ΔV = @SVector zeros(2)
+    # terminal (cost and action-value) expansions
+    TO.gradient!(E, terminal_cost, X[N])
+    TO.hessian!(E, terminal_cost, X[N])
+    P .= P_N = E.Q
+    p .= p_N = E.q
 
-	k = N-1
+    k = N-1
     while k > 0
-        ix = Z[k]._x
-        iu = Z[k]._u
+	# dynamics and cost expansions
+        dt = ts[k + 1] - ts[k]
+	RobotDynamics.discrete_jacobian!(D, A, B, IR, model, X[k], U[k], ts[k], dt, ix, iu)
+        TO.gradient!(E, stage_cost, X[k], U[k])
+        TO.hessian!(E, stage_cost, X[k], U[k])
 
-		# Get error state expanions
-		fdx,fdu = TO.error_expansion(solver.D[k], model)
-		cost_exp = solver.Q[k]
-		Q = solver.Q_tmp 
+	# action-value expansion
+        Qxx .= E.Q + A' * P * A
+        Quu .= E.R + B' * P * B
+        Qux .= E.H + B' * P * A
+        Qx .= E.q + A' * p
+        Qu .= E.r + B' * p
 
-		# Calculate action-value expansion
-		_calc_Q!(Q, cost_exp, S[k+1], fdx, fdu, S[k])
+	# regularization
+	Quu_reg .= Quu + solver.ρ[1] * I
+	Qux_reg .= Qux
 
-		# Regularization
-		Quu_reg .= Q.R #+ solver.ρ[1]*I
-		Quu_reg .+= solver.ρ[1]*Diagonal(@SVector ones(m))
-		Qux_reg .= Q.H
+	if solver.opts.bp_reg
+	    vals = eigvals(Hermitian(Quu_reg))
+	    if minimum(vals) <= 0
+	        @warn "Backward pass regularized"
+                regularization_update!(solver, :increase)
+                k = N-1
+                ΔV1 = 0
+                ΔV2 = 0
+                P .= P_N
+                p .= p_N
+                continue
+            end
+        end
 
-	    if solver.opts.bp_reg
-	        vals = eigvals(Hermitian(Quu_reg))
-	        if minimum(vals) <= 0
-	            @warn "Backward pass regularized"
-	            regularization_update!(solver, :increase)
-	            k = N-1
-	            ΔV = @SVector zeros(2)
-	            continue
-	        end
-	    end
-
-        # Compute gains
-		_calc_gains!(K[k], d[k], Quu_reg, Qux_reg, Q.r)
-
-		# Calculate cost-to-go (using unregularized Quu and Qux)
-		ΔV += _calc_ctg!(S[k], Q, K[k], d[k])
+        # gains
+        _calc_gains!(K[k], d[k], Quu_reg, Qux_reg, Qu)
+        
+	# cost-to-go (using unregularized Quu and Qux)
+	_calc_ctg!(ΔV, P, P_, p, p_, K[k], d[k], Qxx, Quu, Qux, Qx, Qu)
 
         k -= 1
     end
 
     regularization_update!(solver, :decrease)
-
-    return ΔV
-
+    
+    return nothing
 end
+
 
 function static_backwardpass!(solver::iLQRSolver{T,QUAD,L,O,n,n̄,m}) where {T,QUAD<:QuadratureRule,L,O,n,n̄,m}
 	N = solver.N
@@ -80,8 +110,8 @@ function static_backwardpass!(solver::iLQRSolver{T,QUAD,L,O,n,n̄,m}) where {T,Q
     Z = solver.Z; K = solver.K; d = solver.d;
     G = solver.G
     S = solver.S
-	Quu_reg = SMatrix(solver.Quu_reg)
-	Qux_reg = SMatrix(solver.Qux_reg)
+    Quu_reg = SMatrix(solver.Quu_reg)
+    Qux_reg = SMatrix(solver.Qux_reg)
 
     # Terminal cost-to-go
 	# Q = error_expansion(solver.Q[N], model)
@@ -166,97 +196,73 @@ function _bp_reg!(Q, fdx, fdu, ρ, ver=:control)
 	Quu_reg, Qux_reg
 end
 
-function _calc_Q!(Q, cost_exp, S1, fdx, fdu, Q_tmp)
-	# Compute the cost-to-go, stashing temporary variables in S[k]
-	# Qx =  Q.x[k] + fdx'S.x[k+1]
-	mul!(Q.q, Transpose(fdx), S1.q)
-	Q.q .+= cost_exp.q
+# function _calc_Q!(Q::TO.StaticExpansion, Sxx, Sx, fdx::SMatrix, fdu::SMatrix)
+# 	Qx = Q.x + fdx'Sx
+# 	Qu = Q.u + fdu'Sx
+# 	Qxx = Q.xx + fdx'Sxx*fdx
+# 	Quu = Q.uu + fdu'Sxx*fdu
+# 	Qux = Q.ux + fdu'Sxx*fdx
+# 	TO.StaticExpansion(Qx,Qxx,Qu,Quu,Qux)
+# end
 
-    # Qu =  Q.u[k] + fdu'S.x[k+1]
-	mul!(Q.r, Transpose(fdu), S1.q)
-	Q.r .+= cost_exp.r
 
-    # Qxx = Q.xx[k] + fdx'S.xx[k+1]*fdx
-	mul!(Q_tmp.Q, Transpose(fdx), S1.Q)
-	mul!(Q.Q, Q_tmp.Q, fdx)
-	Q.Q .+= cost_exp.Q
-
-    # Quu = Q.uu[k] + fdu'S.xx[k+1]*fdu
-	mul!(Q_tmp.H, Transpose(fdu), S1.Q)
-	mul!(Q.R, Q_tmp.H, fdu)
-	Q.R .+= cost_exp.R
-
-    # Qux = Q.ux[k] + fdu'S.xx[k+1]*fdx
-	mul!(Q_tmp.H, Transpose(fdu), S1.Q)
-	mul!(Q.H, Q_tmp.H, fdx)
-	Q.H .+= cost_exp.H
-
-	return nothing
-end
-
-function _calc_Q!(Q::TO.StaticExpansion, Sxx, Sx, fdx::SMatrix, fdu::SMatrix)
-	Qx = Q.x + fdx'Sx
-	Qu = Q.u + fdu'Sx
-	Qxx = Q.xx + fdx'Sxx*fdx
-	Quu = Q.uu + fdu'Sxx*fdu
-	Qux = Q.ux + fdu'Sxx*fdx
-	TO.StaticExpansion(Qx,Qxx,Qu,Quu,Qux)
+function _calc_gains!(K::AbstractMatrix, d::AbstractVector, Quu::AbstractMatrix,
+                      Qux::AbstractMatrix, Qu::AbstractVector)
+    LAPACK.potrf!('U', Quu)
+    K .= Qux
+    d .= Qu
+    LAPACK.potrs!('U', Quu, K)
+    LAPACK.potrs!('U', Quu, d)
+    K .*= -1
+    d .*= -1
 end
 
 
-function _calc_gains!(K, d, Quu, Qux, Qu)
-	LAPACK.potrf!('U', Quu)
-	K .= Qux
-	d .= Qu
-	LAPACK.potrs!('U', Quu, K)
-	LAPACK.potrs!('U', Quu, d)
-	K .*= -1
-	d .*= -1
-	# return K,d
-end
+# function _calc_gains!(K, d, Quu::SMatrix, Qux::SMatrix, Qu::SVector)
+# 	K_ = -Quu\Qux
+# 	d_ = -Quu\Qu
+# 	K .= K_
+# 	d .= d_
+# 	return K_,d_
+# end
 
-function _calc_gains!(K, d, Quu::SMatrix, Qux::SMatrix, Qu::SVector)
-	K_ = -Quu\Qux
-	d_ = -Quu\Qu
-	K .= K_
-	d .= d_
-	return K_,d_
-end
 
-function _calc_ctg!(S, Q, K, d)
-	# S.x[k]  =  Qx + K[k]'*Quu*d[k] + K[k]'* Qu + Qux'd[k]
-	tmp1 = S.r
-	S.q .= Q.q
-	mul!(tmp1, Q.R, d)
-	mul!(S.q, Transpose(K), tmp1, 1.0, 1.0)
-	mul!(S.q, Transpose(K), Q.r, 1.0, 1.0)
-	mul!(S.q, Transpose(Q.H), d, 1.0, 1.0)
+function _calc_ctg!(ΔV, P, P_, p, p_, K, d, Qxx, Quu, Qux, Qx, Qu)
+    # p = Qx + K' * Quu * d +K' * Qu + Qxu * d
+    p .= Qx
+    mul!(p_, Quu, d)
+    mul!(p, K', p_, 1.0, 1.0)
+    mul!(p, K', Qu, 1.0, 1.0)
+    mul!(p, Qux', d, 1.0, 1.0)
 
-	# S.xx[k] = Qxx + K[k]'*Quu*K[k] + K[k]'*Qux + Qux'K[k]
-	tmp2 = S.H
-	S.Q .= Q.Q
-	mul!(tmp2, Q.R, K)
-	mul!(S.Q, Transpose(K), tmp2, 1.0, 1.0)
-	mul!(S.Q, Transpose(K), Q.H, 1.0, 1.0)
-	mul!(S.Q, Transpose(Q.H), K, 1.0, 1.0)
-	transpose!(Q.Q, S.Q)
-	S.Q .+= Q.Q
-	S.Q .*= 0.5
+    # P = Qxx + K' * Quu * K + K' * Qux + Qxu * K
+    P .= Qxx
+    mul!(P_, Quu, K)
+    mul!(P, K', P_, 1.0, 1.0)
+    mul!(P, K', Qux, 1.0, 1.0)
+    mul!(P, Qux', K, 1.0, 1.0)
+    transpose!(Qxx, P)
+    P .+= Qxx
+    P .*= 0.5
 
     # calculated change is cost-to-go over entire trajectory
-	t1 = dot(d, Q.r)
-	mul!(Q.r, Q.R, d)
-	t2 = 0.5*dot(d, Q.r)
-    return @SVector [t1, t2]
+    t1 = dot(d, Qu)
+    mul!(Qu, Quu, d)
+    t2 = 0.5 * dot(d, Qu)
+    ΔV[1] += t1
+    ΔV[2] += t2
+
+    return nothing
 end
 
-function _calc_ctg!(Q::TO.StaticExpansion, K::SMatrix, d::SVector)
-	Sx = Q.x + K'Q.uu*d + K'Q.u + Q.ux'd
-	Sxx = Q.xx + K'Q.uu*K + K'Q.ux + Q.ux'K
-	Sxx = 0.5*(Sxx + Sxx')
-	# S.x .= Sx
-	# S.xx .= Sxx
-	t1 = d'Q.u
-	t2 = 0.5*d'Q.uu*d
-	return Sxx, Sx, @SVector [t1, t2]
-end
+
+# function _calc_ctg!(Q::TO.StaticExpansion, K::SMatrix, d::SVector)
+# 	Sx = Q.x + K'Q.uu*d + K'Q.u + Q.ux'd
+# 	Sxx = Q.xx + K'Q.uu*K + K'Q.ux + Q.ux'K
+# 	Sxx = 0.5*(Sxx + Sxx')
+# 	# S.x .= Sx
+# 	# S.xx .= Sxx
+# 	t1 = d'Q.u
+# 	t2 = 0.5*d'Q.uu*d
+# 	return Sxx, Sx, @SVector [t1, t2]
+# end

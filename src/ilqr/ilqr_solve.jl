@@ -1,54 +1,66 @@
-function initialize!(solver::iLQRSolver)
-	reset!(solver)
+"""
+ilqr_solve.jl
+"""
+
+"iLQR solve method"
+function solve!(solver::iLQRSolver{IR}) where {IR}
+    # initialize
+    reset!(solver)
     set_verbosity!(solver)
     clear_cache!(solver)
-
     solver.ρ[1] = solver.opts.bp_reg_initial
     solver.dρ[1] = 0.0
+    n, m, N = size(solver)
+    stage_cost = solver.obj.stage_cost
+    terminal_cost = solver.obj.terminal_cost
+    X = solver.X
+    U = solver.U
+    ts = solver.ts
+    J_prev = Inf
+    println("solver.stats.status: $(solver.stats.status)")
 
-    # Initial rollout
-    rollout!(solver)
-    TO.cost!(solver.obj, solver.Z)
-end
+    # initial rollout
+    J_prev = 0.
+    for k = 1:N-1
+        J_prev += TO.stage_cost(stage_cost, X[k], U[k])
+        dt = ts[k + 1] - ts[k]
+        X[k + 1] = RobotDynamics.discrete_dynamics(IR, solver.model, X[k], U[k], ts[k], dt)
+    end
+    J_prev += TO.stage_cost(terminal_cost, X[N])
 
-# Generic solve methods
-"iLQR solve method (non-allocating)"
-function solve!(solver::iLQRSolver{T}) where T<:AbstractFloat
-	initialize!(solver)
-
-    Z = solver.Z; Z̄ = solver.Z̄;
-
-    n,m,N = size(solver)
-    J = Inf
-    _J = TO.get_J(solver.obj)
-    J_prev = sum(_J)
-
+    # run iLQR iterations
     for i = 1:solver.opts.iterations
-        J = step!(solver, J_prev)
-
-        # check for a change in solver status
-        status(solver) > SOLVE_SUCCEEDED && break
-
-
-        copy_trajectories!(solver)
-
+        # step
+        if solver.opts.static_bp
+    	    static_backwardpass!(solver)
+        else
+	    backwardpass!(solver)
+        end
+        J = forwardpass!(solver, J_prev)
+        # exit if solve succeeded
+        if solver.stats.status > SOLVE_SUCCEEDED
+            println("solver.stats.status: $(solver.stats.status)")
+            break
+        end
+        # accept the updated trajectory
+        for k = 1:N-1
+            solver.X[k] = solver.X_tmp[k]
+            solver.U[k] = solver.U_tmp[k]
+        end
+        # record iteration and evaluate convergence
         dJ = abs(J - J_prev)
-        J_prev = copy(J)
+        J_prev = J
         gradient_todorov!(solver)
-
-        # Record iteration and evaluate convergence
         record_iteration!(solver, J, dJ)
         exit = evaluate_convergence(solver, i)
-
-        # Print iteration
+        # print iteration
         if is_verbose(solver) 
             print_level(InnerLoop, global_logger())
         end
+        # exit if converged
         exit && break
-
-        # check for cost blow up
+        # exit if cost blew up
         if J > solver.opts.max_cost_value
-            # @warn "Cost exceeded maximum cost"
             solver.stats.status = MAXIMUM_COST
             break
         end
@@ -57,19 +69,6 @@ function solve!(solver::iLQRSolver{T}) where T<:AbstractFloat
     return solver
 end
 
-function step!(solver::iLQRSolver, J)
-    TO.state_diff_jacobian!(solver.G, solver.model, solver.Z)
-	TO.dynamics_expansion!(integration(solver), solver.D, solver.model, solver.Z)
-	TO.error_expansion!(solver.D, solver.model, solver.G)
-    TO.cost_expansion!(solver.quad_obj, solver.obj, solver.Z, true, true)
-	TO.error_expansion!(solver.Q, solver.quad_obj, solver.model, solver.Z, solver.G)
-	if solver.opts.static_bp
-    	ΔV = static_backwardpass!(solver)
-	else
-		ΔV = backwardpass!(solver)
-	end
-    forwardpass!(solver, ΔV, J)
-end
 
 """
 $(SIGNATURES)
@@ -77,61 +76,49 @@ Simulate the system forward using the optimal feedback gains from the backward p
 projecting the system on the dynamically feasible subspace. Performs a line search to ensure
 adequate progress on the nonlinear problem.
 """
-function forwardpass!(solver::iLQRSolver, ΔV, J_prev)
-    Z = solver.Z; Z̄ = solver.Z̄
+function forwardpass!(solver::iLQRSolver, J_prev)
     obj = solver.obj
-
-    _J = TO.get_J(obj)
-    J::Float64 = Inf
+    stage_cost = solver.obj.stage_cost
+    terminal_cost = solver.obj.terminal_cost
+    N = solver.N
+    ΔV = solver.ΔV
+    J = Inf
     α = 1.0
     iter = 0
     z = -1.0
     expected = 0.0
     flag = true
 
-    while (z ≤ solver.opts.line_search_lower_bound || z > solver.opts.line_search_upper_bound) && J >= J_prev
-
-        # Check that maximum number of line search decrements has not occured
+    while ((z ≤ solver.opts.line_search_lower_bound
+            || z > solver.opts.line_search_upper_bound)
+           && J >= J_prev)
+        # exit and regularize if the maximum number of line search decrements
+        # has occured
         if iter > solver.opts.iterations_linesearch
-            for k in eachindex(Z)
-                Z̄[k].z = Z[k].z
-            end
-            TO.cost!(obj, Z̄)
-            J = sum(_J)
-
+            J = J_prev
             z = 0
             α = 0.0
             expected = 0.0
-
             regularization_update!(solver, :increase)
             solver.ρ[1] += solver.opts.bp_reg_fp
             break
         end
-
-
-        # Otherwise, rollout a new trajectory for current alpha
-        flag = rollout!(solver, α)
-
-        # Check if rollout completed
-        if ~flag
-            # Reduce step size if rollout returns non-finite values (NaN or Inf)
-            # @logmsg InnerIters "Non-finite values in rollout"
+        # otherwise, rollout a new trajectory for current alpha
+        J, flag = rollout!(solver, α)
+        # reduce step size if rollout returns non-finite values (NaN or Inf)
+        if !flag
+            J = J_prev
             iter += 1
             α /= 2.0
             continue
         end
-
-        # Calcuate cost
-        TO.cost!(obj, Z̄)
-        J = sum(_J)
-
-        expected::Float64 = -α*(ΔV[1] + α*ΔV[2])
+        # update
+        expected = -α*(ΔV[1] + α*ΔV[2])
         if expected > 0.0
-            z::Float64  = (J_prev - J)/expected
+            z  = (J_prev - J)/expected
         else
             z = -1.0
         end
-
         iter += 1
         α /= 2.0
     end
@@ -148,14 +135,8 @@ function forwardpass!(solver::iLQRSolver, ΔV, J_prev)
     @logmsg InnerLoop :ρ value=solver.ρ[1]
 
     return J
-
 end
 
-function copy_trajectories!(solver::iLQRSolver)
-    for k = 1:solver.N
-        solver.Z[k].z = solver.Z̄[k].z
-    end
-end
 
 """
 Stash iteration statistics
@@ -184,12 +165,14 @@ $(SIGNATURES)
     Calculate the problem gradient using heuristic from iLQG (Todorov) solver
 """
 function gradient_todorov!(solver::iLQRSolver)
-	tmp = solver.S[end].r
+    N = solver.N
+    tmp = solver.U_tmp[N]
+    u = solver.U_tmp[N+1]
     for k in eachindex(solver.d)
-		tmp .= abs.(solver.d[k])
-		u = abs.(control(solver.Z[k])) .+ 1
-		tmp ./= u
-		solver.grad[k] = maximum(tmp)
+	tmp .= abs.(solver.d[k])
+	u .= abs.(solver.U[k]) .+ 1
+	tmp ./= u
+	solver.grad[k] = maximum(tmp)
     end
 end
 

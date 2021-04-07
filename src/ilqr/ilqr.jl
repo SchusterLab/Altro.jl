@@ -1,104 +1,125 @@
-using CUDA
+"""
+ilqr.jl
+"""
 
-struct iLQRSolver{T,I<:QuadratureRule,L,O,n,n̄,m,L1,V} <: UnconstrainedSolver{T}
-    # Model + Objective
-    model::L
-    obj::O
+using TrajectoryOptimization
+const TO = TrajectoryOptimization
 
-    # Problem info
-    x0::AbstractVector
-    xf::AbstractVector
-    tf::T
+struct iLQRSolver{IR,Tm,To,Tix,Tiu,Txx,Tuu,Tux,Txu,Tx,Tu,TD,TG,T
+                  } <: UnconstrainedSolver{T}
+    model::Tm
+    obj::To
+    ix::Tix
+    iu::Tiu
+    X::Vector{Tx}
+    X_tmp::Vector{Tx}
+    U::Vector{Tu}
+    U_tmp::Vector{Tu}
+    ts::Vector{T}
+    n::Int
+    m::Int
     N::Int
-
     opts::SolverOptions{T}
     stats::SolverStats{T}
-
-    # Primal Duals
-    Z::Traj{n,m,T,RobotDynamics.GeneralKnotPoint{T,n,m,V}}
-    Z̄::Traj{n,m,T,RobotDynamics.GeneralKnotPoint{T,n,m,V}}
-
-    # Data variables
-    # K::Vector{SMatrix{m,n̄,T,L2}}  # State feedback gains (m,n,N-1)
-    K::AbstractVector  # State feedback gains (m,n,N-1)
-    d::AbstractVector  # Feedforward gains (m,N-1)
-
-    D::Vector{DynamicsExpansion{T,n,n̄,m}}  # discrete dynamics jacobian (block) (n,n+m+1,N)
-    G::AbstractVector # state difference jacobian (n̄, n)
-
-	quad_obj::QuadraticObjective{n,m,T}  # quadratic expansion of obj
-	S::QuadraticObjective{n̄,m,T}         # Cost-to-go expansion
-    Q::QuadraticObjective{n̄,m,T}         # Action-value expansion
-
-    Q_tmp::TO.QuadraticCost{n̄,m,T,Matrix{T},Matrix{T}}
-	Quu_reg::Matrix{T}
-	Qux_reg::Matrix{T}
-
-    ρ::Vector{T}   # Regularization
-    dρ::Vector{T}  # Regularization rate of change
-
-    grad::Vector{T}  # Gradient
-
+    # gains
+    # state feedback gains (m, n) x N
+    K::Vector{Tux}
+    # feedforward gains (m) x N
+    d::Vector{Tu}
+    # discrete dynamics jacobians
+    # block jacobian (n, n + m)
+    D::TD
+    # w.r.t. state (n, n)
+    A::Txx
+    # w.r.t. control (n, m)
+    B::Txu
+    # state difference jacobian (n̄, n)
+    G::TG
+    # quadratic expansion of obj
+    E::TO.QuadraticCost{Txx,Tuu,Tux,Tx,Tu,T}
+    Qxx::Txx
+    Quu::Tuu
+    Quu_reg::Tuu
+    Qux::Tux
+    Qux_reg::Tux
+    Qx::Tx
+    Qu::Tu
+    # cost-to-go
+    P::Txx
+    P_::Tux
+    p::Tx
+    p_::Tu
+    ΔV::Vector{T}
+    # regularization
+    ρ::Vector{T}   
+    # regularization rate of change
+    dρ::Vector{T}
+    # gradient
+    grad::Vector{T}
     logger::SolverLogger
-
 end
 
-function iLQRSolver(
-        prob::Problem{QUAD,T}, 
-        opts::SolverOptions=SolverOptions(), 
-        stats::SolverStats=SolverStats(parent=solvername(iLQRSolver));
-        kwarg_opts...
-    ) where {QUAD,T}
+
+function iLQRSolver(prob::Problem{IR,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,T},
+                    opts::SolverOptions=SolverOptions(), 
+                    stats::SolverStats=SolverStats(parent=solvername(iLQRSolver));
+                    kwarg_opts...) where {IR,T}
     set_options!(opts; kwarg_opts...)
-
-    # Init solver results
-    n,m,N = size(prob)
+    n, m, N = size(prob)
     n̄ = RobotDynamics.state_diff_size(prob.model)
-
-    x0 = prob.x0
-    xf = prob.xf
-
-    Z = prob.Z
-    Z̄ = copy(prob.Z)
-
-	K = [zeros(T,m,n̄) for k = 1:N-1]
-    d = [zeros(T,m)   for k = 1:N-1]
-
-	D = [DynamicsExpansion{T}(n,n̄,m) for k = 1:N-1]
-	G = [zeros(n,n̄) for k = 1:N+1]  # add one to the end to use as an intermediate result
-
-	Q = QuadraticObjective(n̄,m,N)
-	quad_exp = QuadraticObjective(Q, prob.model)
-	S = QuadraticObjective(n̄,m,N)
-
-    Q_tmp = TO.QuadraticCost{T}(n̄,m)
-    Quu_reg = zeros(m,m)
-	Qux_reg = zeros(m,n̄)
-    
-    ρ = zeros(T,1)
-    dρ = zeros(T,1)
-
-    grad = zeros(T,N-1)
-
+    M = prob.M
+    V = prob.V
+    X_tmp = [V(zeros(T, n)) for k = 1:N+1] # 1 extra
+    U_tmp = [V(zeros(T, m)) for k = 1:N+1] # 2 extra
+    K = [M(zeros(T, m, n̄)) for k = 1:N-1]
+    d = [V(zeros(T, m)) for k = 1:N-1]
+    D = M(zeros(T, n, n + m))
+    A = M(zeros(T, n, n))
+    B = M(zeros(T, n, m))
+    G = M(zeros(T, n̄, m))
+    Qxx = M(zeros(T, n, n))
+    Quu = M(zeros(T, m, m))
+    Quu_reg = M(zeros(T, m, m))
+    Qux = M(zeros(T, m, n))
+    Qux_reg = M(zeros(T, m, n))
+    Qx = V(zeros(T, n))
+    Qu = V(zeros(T, m))
+    E = QuadraticCost(copy(Qxx), copy(Quu), copy(Qux), copy(Qx), copy(Qu), 0.; checks=false)
+    P = M(zeros(T, n, n))
+    P_ = M(zeros(T, m, n))
+    p = V(zeros(T, n))
+    p_ = V(zeros(T, m))
+    ΔV = zeros(T, 2)
+    ρ = zeros(T, 1)
+    dρ = zeros(T, 1)
+    grad = zeros(T, N-1)
     logger = SolverLogging.default_logger(opts.verbose >= 2)
-	L = typeof(prob.model)
-	O = typeof(prob.obj)
-    V = CuVector{T}
-    solver = iLQRSolver{T,QUAD,L,O,n,n̄,m,n+m,V}(prob.model, prob.obj, x0, xf,
-		prob.tf, N, opts, stats,
-        Z, Z̄, K, d, D, G, quad_exp, S, Q, Q_tmp, Quu_reg, Qux_reg, ρ, dρ, grad, logger)
-
+    Tm = typeof(prob.model)
+    To = typeof(prob.obj)
+    Tix = typeof(prob.ix)
+    Tiu = typeof(prob.iu)
+    Txx = typeof(Qxx)
+    Tuu = typeof(Quu)
+    Tux = typeof(Qux)
+    Txu = typeof(B)
+    Tx = typeof(Qx)
+    Tu = typeof(Qu)
+    TD = typeof(D)
+    TG = typeof(G)
+    solver = iLQRSolver{IR,Tm,To,Tix,Tiu,Txx,Tuu,Tux,Txu,Tx,Tu,TD,TG,T}(
+        prob.model, prob.obj, prob.ix, prob.iu, prob.X, X_tmp, prob.U, U_tmp, prob.ts,
+        n, m, N, opts, stats, K, d, D, A, B, G, E, Qxx, Quu, Quu_reg, Qux,
+        Qux_reg, Qx, Qu, P, P_, p, p_, ΔV, ρ, dρ, grad, logger)
     reset!(solver)
     return solver
 end
 
-# Getters
-Base.size(solver::iLQRSolver{<:Any,<:Any,<:Any,<:Any,n,<:Any,m}) where {n,m} = n,m,solver.N
-@inline TO.get_trajectory(solver::iLQRSolver) = solver.Z
+# methods
+Base.size(solver::iLQRSolver) = solver.n, solver.m, solver.N
 @inline TO.get_objective(solver::iLQRSolver) = solver.obj
 @inline TO.get_model(solver::iLQRSolver) = solver.model
-@inline get_initial_state(solver::iLQRSolver) = solver.x0
-@inline TO.integration(solver::iLQRSolver{<:Any,Q}) where Q = Q
+@inline get_initial_state(solver::iLQRSolver) = solver.X[1]
+@inline TO.integration(solver::iLQRSolver{QUAD}) where {QUAD} = QUAD
 solvername(::Type{<:iLQRSolver}) = :iLQR
 
 log_level(::iLQRSolver) = InnerLoop
@@ -109,4 +130,3 @@ function reset!(solver::iLQRSolver{T}) where T
     solver.dρ[1] = 0.0
     return nothing
 end
-
