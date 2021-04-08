@@ -2,6 +2,8 @@
 ilqr_solve.jl
 """
 
+show_nice(x) = show(IOContext(stdout), "text/plain", x)
+
 "iLQR solve method"
 function solve!(solver::iLQRSolver{IR}) where {IR}
     # initialize
@@ -16,10 +18,8 @@ function solve!(solver::iLQRSolver{IR}) where {IR}
     X = solver.X
     U = solver.U
     ts = solver.ts
-    J_prev = Inf
-    println("solver.stats.status: $(solver.stats.status)")
 
-    # initial rollout
+    # initial rollout and cost calculation
     J_prev = 0.
     for k = 1:N-1
         J_prev += TO.stage_cost(stage_cost, X[k], U[k])
@@ -44,9 +44,10 @@ function solve!(solver::iLQRSolver{IR}) where {IR}
         end
         # accept the updated trajectory
         for k = 1:N-1
-            solver.X[k] = solver.X_tmp[k]
-            solver.U[k] = solver.U_tmp[k]
+            solver.X[k] .= solver.X_tmp[k]
+            solver.U[k] .= solver.U_tmp[k]
         end
+        solver.X[N] .= solver.X_tmp[N]
         # record iteration and evaluate convergence
         dJ = abs(J - J_prev)
         J_prev = J
@@ -105,13 +106,17 @@ function forwardpass!(solver::iLQRSolver, J_prev)
         end
         # otherwise, rollout a new trajectory for current alpha
         J, flag = rollout!(solver, α)
+        # println("rollout!")
         # reduce step size if rollout returns non-finite values (NaN or Inf)
         if !flag
+            println("flag")
             J = J_prev
             iter += 1
             α /= 2.0
             continue
         end
+
+        # println("J: $(J)")
         # update
         expected = -α*(ΔV[1] + α*ΔV[2])
         if expected > 0.0

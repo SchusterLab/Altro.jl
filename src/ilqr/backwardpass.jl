@@ -2,6 +2,8 @@
 backwardpass.jl
 """
 
+show_nice(x) = show(IOContext(stdout), "text/plain", x)
+
 """
 Calculates the optimal feedback gains K,d as well as the 2nd Order approximation of the
 Cost-to-Go, using a backward Riccati-style recursion. (non-allocating)
@@ -36,20 +38,14 @@ function backwardpass!(solver::iLQRSolver{IR}) where {IR<:QuadratureRule}
     p = solver.p
     p_ = solver.p_
     ΔV = solver.ΔV
-    J = 0
-
-    # compute cost
-    for k = 1:N-1
-        # cost
-        J += TO.stage_cost(stage_cost, X[k], U[k])
-    end
-    J += TO.stage_cost(terminal_cost, X[N])
 
     # terminal (cost and action-value) expansions
     TO.gradient!(E, terminal_cost, X[N])
     TO.hessian!(E, terminal_cost, X[N])
     P .= P_N = E.Q
     p .= p_N = E.q
+    # println("P_N:\n$(P_N)")
+    # println("p_N:\n$(p_N)")
 
     k = N-1
     while k > 0
@@ -58,6 +54,22 @@ function backwardpass!(solver::iLQRSolver{IR}) where {IR<:QuadratureRule}
 	RobotDynamics.discrete_jacobian!(D, A, B, IR, model, X[k], U[k], ts[k], dt, ix, iu)
         TO.gradient!(E, stage_cost, X[k], U[k])
         TO.hessian!(E, stage_cost, X[k], U[k])
+        # if k == 1
+        #     println("A:")
+        #     show_nice(A)
+        #     println("\nB:")
+        #     show_nice(B)
+        #     println("\nE.Q:")
+        #     show_nice(E.Q)
+        #     println("\nE.R:")
+        #     show_nice(E.R)
+        #     println("\nE.H:")
+        #     show_nice(E.H)
+        #     println("\nE.q:")
+        #     show_nice(E.q)
+        #     println("\nE.r:")
+        #     show_nice(E.r)
+        # end
 
 	# action-value expansion
         Qxx .= E.Q + A' * P * A
@@ -65,19 +77,34 @@ function backwardpass!(solver::iLQRSolver{IR}) where {IR<:QuadratureRule}
         Qux .= E.H + B' * P * A
         Qx .= E.q + A' * p
         Qu .= E.r + B' * p
-
+        
 	# regularization
 	Quu_reg .= Quu + solver.ρ[1] * I
 	Qux_reg .= Qux
+        # if k == 1
+        #     println("Qxx:")
+        #     show_nice(Qxx)
+        #     println("\nQuu:")
+        #     show_nice(Quu)
+        #     println("\nQux:")
+        #     show_nice(Qux)
+        #     println("\nQx:")
+        #     show_nice(Qx)
+        #     println("\nQu:")
+        #     show_nice(Qu)
+        #     println("Quu_reg:")
+        #     show_nice(Quu_reg)
+        #     println("")
+        # end
 
 	if solver.opts.bp_reg
+            println("regularized")
 	    vals = eigvals(Hermitian(Quu_reg))
 	    if minimum(vals) <= 0
 	        @warn "Backward pass regularized"
                 regularization_update!(solver, :increase)
                 k = N-1
-                ΔV1 = 0
-                ΔV2 = 0
+                ΔV .= 0
                 P .= P_N
                 p .= p_N
                 continue
@@ -86,9 +113,25 @@ function backwardpass!(solver::iLQRSolver{IR}) where {IR<:QuadratureRule}
 
         # gains
         _calc_gains!(K[k], d[k], Quu_reg, Qux_reg, Qu)
+        # if k == 1
+        #     println("K:")
+        #     show_nice(K[k])
+        #     println("\nd:")
+        #     show_nice(d[k])
+        #     println("")
+        # end
         
 	# cost-to-go (using unregularized Quu and Qux)
 	_calc_ctg!(ΔV, P, P_, p, p_, K[k], d[k], Qxx, Quu, Qux, Qx, Qu)
+        # if k == 1
+        #     println("P:")
+        #     show_nice(P)
+        #     println("\np:")
+        #     show_nice(p)
+        #     println("\nΔV")
+        #     show_nice(ΔV)
+        #     println("")
+        # end
 
         k -= 1
     end
@@ -99,8 +142,9 @@ function backwardpass!(solver::iLQRSolver{IR}) where {IR<:QuadratureRule}
 end
 
 
-function static_backwardpass!(solver::iLQRSolver{T,QUAD,L,O,n,n̄,m}) where {T,QUAD<:QuadratureRule,L,O,n,n̄,m}
-	N = solver.N
+function static_backwardpass!(solver::iLQRSolver{T,QUAD,L,O,n,n̄,m}) where {
+    T,QUAD<:QuadratureRule,L,O,n,n̄,m}
+    N = solver.N
 
     # Objective
     obj = solver.obj

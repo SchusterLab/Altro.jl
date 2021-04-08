@@ -2,6 +2,8 @@
 rollout.jl
 """
 
+show_nice(x) = show(IOContext(stdout), "text/plain", x)
+
 function rollout!(solver::iLQRSolver{IR}, α) where {IR}
     N = solver.N
     X = solver.X
@@ -12,7 +14,7 @@ function rollout!(solver::iLQRSolver{IR}, α) where {IR}
     δu = solver.U_tmp[N]
     ts = solver.ts
     K = solver.K
-    d = solver.d;
+    d = solver.d
     stage_cost = solver.obj.stage_cost
     terminal_cost = solver.obj.terminal_cost
     J = 0.
@@ -29,7 +31,6 @@ function rollout!(solver::iLQRSolver{IR}, α) where {IR}
                                                         U_tmp[k], ts[k], dt)
         # compute cost
         J += TrajectoryOptimization.stage_cost(stage_cost, X_tmp[k], U_tmp[k])
-        # report state or control blowup
         max_x = norm(X_tmp[k + 1], Inf)
         if max_x > solver.opts.max_state_value || isnan(max_x)
             solver.stats.status = STATE_LIMIT
