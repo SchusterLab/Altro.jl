@@ -2,8 +2,6 @@
 ilqr_solve.jl
 """
 
-show_nice(x) = show(IOContext(stdout), "text/plain", x)
-
 "iLQR solve method"
 function solve!(solver::iLQRSolver{IR}) where {IR}
     # initialize
@@ -24,7 +22,7 @@ function solve!(solver::iLQRSolver{IR}) where {IR}
     for k = 1:N-1
         J_prev += TO.stage_cost(stage_cost, X[k], U[k])
         dt = ts[k + 1] - ts[k]
-        X[k + 1] = RobotDynamics.discrete_dynamics(IR, solver.model, X[k], U[k], ts[k], dt)
+        RobotDynamics.discrete_dynamics!(X[k + 1], IR, solver.model, X[k], U[k], ts[k], dt)
     end
     J_prev += TO.stage_cost(terminal_cost, X[N])
 

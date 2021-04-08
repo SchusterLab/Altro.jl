@@ -17,6 +17,7 @@ using Logging
 using Statistics
 
 const TO = TrajectoryOptimization
+const RD = RobotDynamics
 
 using TrajectoryOptimization:
     integration, num_constraints, get_trajectory

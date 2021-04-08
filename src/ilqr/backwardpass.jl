@@ -2,13 +2,11 @@
 backwardpass.jl
 """
 
-show_nice(x) = show(IOContext(stdout), "text/plain", x)
-
 """
 Calculates the optimal feedback gains K,d as well as the 2nd Order approximation of the
 Cost-to-Go, using a backward Riccati-style recursion. (non-allocating)
 """
-function backwardpass!(solver::iLQRSolver{IR}) where {IR<:QuadratureRule}
+function backwardpass!(solver::iLQRSolver{IR}) where {IR}
     # initialize
     model = solver.model
     stage_cost = solver.obj.stage_cost
@@ -18,6 +16,7 @@ function backwardpass!(solver::iLQRSolver{IR}) where {IR<:QuadratureRule}
     X = solver.X
     U = solver.U
     ts = solver.ts
+    m = solver.m
     N = solver.N
     K = solver.K
     d = solver.d
@@ -27,75 +26,43 @@ function backwardpass!(solver::iLQRSolver{IR}) where {IR<:QuadratureRule}
     G = solver.G
     E = solver.E
     Qxx = solver.Qxx
+    Qxx_tmp = solver.Qxx_tmp
     Quu = solver.Quu
     Quu_reg = solver.Quu_reg
     Qux = solver.Qux
+    Qux_tmp = solver.Qux_tmp
     Qux_reg = solver.Qux_reg
     Qx = solver.Qx
     Qu = solver.Qu
     P = solver.P
-    P_ = solver.P_
+    P_tmp = solver.P_tmp
     p = solver.p
-    p_ = solver.p_
+    p_tmp = solver.p_tmp
     ΔV = solver.ΔV
 
     # terminal (cost and action-value) expansions
     TO.gradient!(E, terminal_cost, X[N])
     TO.hessian!(E, terminal_cost, X[N])
-    P .= P_N = E.Q
-    p .= p_N = E.q
-    # println("P_N:\n$(P_N)")
-    # println("p_N:\n$(p_N)")
+    P .= E.Q
+    p .= E.q
 
     k = N-1
     while k > 0
 	# dynamics and cost expansions
         dt = ts[k + 1] - ts[k]
-	RobotDynamics.discrete_jacobian!(D, A, B, IR, model, X[k], U[k], ts[k], dt, ix, iu)
+	RD.discrete_jacobian!(D, A, B, IR, model, X[k], U[k], ts[k], dt, ix, iu)
         TO.gradient!(E, stage_cost, X[k], U[k])
         TO.hessian!(E, stage_cost, X[k], U[k])
-        # if k == 1
-        #     println("A:")
-        #     show_nice(A)
-        #     println("\nB:")
-        #     show_nice(B)
-        #     println("\nE.Q:")
-        #     show_nice(E.Q)
-        #     println("\nE.R:")
-        #     show_nice(E.R)
-        #     println("\nE.H:")
-        #     show_nice(E.H)
-        #     println("\nE.q:")
-        #     show_nice(E.q)
-        #     println("\nE.r:")
-        #     show_nice(E.r)
-        # end
 
 	# action-value expansion
-        Qxx .= E.Q + A' * P * A
-        Quu .= E.R + B' * P * B
-        Qux .= E.H + B' * P * A
-        Qx .= E.q + A' * p
-        Qu .= E.r + B' * p
-        
+        _calc_Q!(Qxx, Qxx_tmp, Quu, Qux, Qux_tmp, Qx, Qu, E, A, B, P, p)
+
 	# regularization
-	Quu_reg .= Quu + solver.ρ[1] * I
+	Quu_reg .= Quu
+        for i = 1:m
+            Quu_reg[i, i] += solver.ρ[1]
+        end
 	Qux_reg .= Qux
-        # if k == 1
-        #     println("Qxx:")
-        #     show_nice(Qxx)
-        #     println("\nQuu:")
-        #     show_nice(Quu)
-        #     println("\nQux:")
-        #     show_nice(Qux)
-        #     println("\nQx:")
-        #     show_nice(Qx)
-        #     println("\nQu:")
-        #     show_nice(Qu)
-        #     println("Quu_reg:")
-        #     show_nice(Quu_reg)
-        #     println("")
-        # end
 
 	if solver.opts.bp_reg
             println("regularized")
@@ -105,33 +72,19 @@ function backwardpass!(solver::iLQRSolver{IR}) where {IR<:QuadratureRule}
                 regularization_update!(solver, :increase)
                 k = N-1
                 ΔV .= 0
-                P .= P_N
-                p .= p_N
+                TO.gradient!(E, terminal_cost, X[N])
+                TO.hessian!(E, terminal_cost, X[N])
+                P .= E.Q
+                p .= E.q
                 continue
             end
         end
 
         # gains
         _calc_gains!(K[k], d[k], Quu_reg, Qux_reg, Qu)
-        # if k == 1
-        #     println("K:")
-        #     show_nice(K[k])
-        #     println("\nd:")
-        #     show_nice(d[k])
-        #     println("")
-        # end
         
 	# cost-to-go (using unregularized Quu and Qux)
-	_calc_ctg!(ΔV, P, P_, p, p_, K[k], d[k], Qxx, Quu, Qux, Qx, Qu)
-        # if k == 1
-        #     println("P:")
-        #     show_nice(P)
-        #     println("\np:")
-        #     show_nice(p)
-        #     println("\nΔV")
-        #     show_nice(ΔV)
-        #     println("")
-        # end
+	_calc_ctg!(ΔV, P, P_tmp, p, p_tmp, K[k], d[k], Qxx, Quu, Qux, Qx, Qu)
 
         k -= 1
     end
@@ -240,6 +193,27 @@ function _bp_reg!(Q, fdx, fdu, ρ, ver=:control)
 	Quu_reg, Qux_reg
 end
 
+function _calc_Q!(Qxx, Qxx_tmp, Quu, Qux, Qux_tmp, Qx, Qu, E, A, B, P, p)
+    # Qxx
+    mul!(Qxx_tmp, Transpose(A), P)
+    mul!(Qxx, Qxx_tmp, A)
+    Qxx .+= E.Q
+    # Quu
+    mul!(Qux_tmp, Transpose(B), P)
+    mul!(Quu, Qux_tmp, B)
+    Quu .+= E.R
+    # Qux
+    mul!(Qux_tmp, Transpose(B), P)
+    mul!(Qux, Qux_tmp, A)
+    # Qx
+    mul!(Qx, Transpose(A), p)
+    Qx .+= E.q
+    # Qu
+    mul!(Qu, Transpose(B), p)
+    Qu .+= E.r
+    return nothing
+end
+
 # function _calc_Q!(Q::TO.StaticExpansion, Sxx, Sx, fdx::SMatrix, fdu::SMatrix)
 # 	Qx = Q.x + fdx'Sx
 # 	Qu = Q.u + fdu'Sx
@@ -259,6 +233,7 @@ function _calc_gains!(K::AbstractMatrix, d::AbstractVector, Quu::AbstractMatrix,
     LAPACK.potrs!('U', Quu, d)
     K .*= -1
     d .*= -1
+    return nothing
 end
 
 
@@ -275,16 +250,16 @@ function _calc_ctg!(ΔV, P, P_, p, p_, K, d, Qxx, Quu, Qux, Qx, Qu)
     # p = Qx + K' * Quu * d +K' * Qu + Qxu * d
     p .= Qx
     mul!(p_, Quu, d)
-    mul!(p, K', p_, 1.0, 1.0)
-    mul!(p, K', Qu, 1.0, 1.0)
-    mul!(p, Qux', d, 1.0, 1.0)
+    mul!(p, Transpose(K), p_, 1.0, 1.0)
+    mul!(p, Transpose(K), Qu, 1.0, 1.0)
+    mul!(p, Transpose(Qux), d, 1.0, 1.0)
 
     # P = Qxx + K' * Quu * K + K' * Qux + Qxu * K
     P .= Qxx
     mul!(P_, Quu, K)
-    mul!(P, K', P_, 1.0, 1.0)
-    mul!(P, K', Qux, 1.0, 1.0)
-    mul!(P, Qux', K, 1.0, 1.0)
+    mul!(P, Transpose(K), P_, 1.0, 1.0)
+    mul!(P, Transpose(K), Qux, 1.0, 1.0)
+    mul!(P, Transpose(Qux), K, 1.0, 1.0)
     transpose!(Qxx, P)
     P .+= Qxx
     P .*= 0.5
@@ -295,7 +270,6 @@ function _calc_ctg!(ΔV, P, P_, p, p_, K, d, Qxx, Quu, Qux, Qx, Qu)
     t2 = 0.5 * dot(d, Qu)
     ΔV[1] += t1
     ΔV[2] += t2
-
     return nothing
 end
 

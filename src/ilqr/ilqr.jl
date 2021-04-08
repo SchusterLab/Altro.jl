@@ -38,17 +38,19 @@ struct iLQRSolver{IR,Tm,To,Tix,Tiu,Txx,Tuu,Tux,Txu,Tx,Tu,TD,TG,T
     # quadratic expansion of obj
     E::TO.QuadraticCost{Txx,Tuu,Tux,Tx,Tu,T}
     Qxx::Txx
+    Qxx_tmp::Txx
     Quu::Tuu
     Quu_reg::Tuu
     Qux::Tux
+    Qux_tmp::Tux
     Qux_reg::Tux
     Qx::Tx
     Qu::Tu
     # cost-to-go
     P::Txx
-    P_::Tux
+    P_tmp::Tux
     p::Tx
-    p_::Tu
+    p_tmp::Tu
     ΔV::Vector{T}
     # regularization
     ρ::Vector{T}   
@@ -78,17 +80,19 @@ function iLQRSolver(prob::Problem{IR,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<
     B = M(zeros(T, n, m))
     G = M(zeros(T, n̄, m))
     Qxx = M(zeros(T, n, n))
+    Qxx_tmp = copy(Qxx)
     Quu = M(zeros(T, m, m))
-    Quu_reg = M(zeros(T, m, m))
+    Quu_reg = copy(Quu)
     Qux = M(zeros(T, m, n))
-    Qux_reg = M(zeros(T, m, n))
+    Qux_tmp = copy(Qux)
+    Qux_reg = copy(Qux)
     Qx = V(zeros(T, n))
     Qu = V(zeros(T, m))
     E = QuadraticCost(copy(Qxx), copy(Quu), copy(Qux), copy(Qx), copy(Qu), 0.; checks=false)
     P = M(zeros(T, n, n))
-    P_ = M(zeros(T, m, n))
+    P_tmp = M(zeros(T, m, n))
     p = V(zeros(T, n))
-    p_ = V(zeros(T, m))
+    p_tmp = V(zeros(T, m))
     ΔV = zeros(T, 2)
     ρ = zeros(T, 1)
     dρ = zeros(T, 1)
@@ -108,8 +112,8 @@ function iLQRSolver(prob::Problem{IR,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<
     TG = typeof(G)
     solver = iLQRSolver{IR,Tm,To,Tix,Tiu,Txx,Tuu,Tux,Txu,Tx,Tu,TD,TG,T}(
         prob.model, prob.obj, prob.ix, prob.iu, prob.X, X_tmp, prob.U, U_tmp, prob.ts,
-        n, m, N, opts, stats, K, d, D, A, B, G, E, Qxx, Quu, Quu_reg, Qux,
-        Qux_reg, Qx, Qu, P, P_, p, p_, ΔV, ρ, dρ, grad, logger)
+        n, m, N, opts, stats, K, d, D, A, B, G, E, Qxx, Qxx_tmp, Quu, Quu_reg, Qux,
+        Qux_tmp, Qux_reg, Qx, Qu, P, P_tmp, p, p_tmp, ΔV, ρ, dρ, grad, logger)
     reset!(solver)
     return solver
 end
