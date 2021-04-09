@@ -74,8 +74,8 @@ solvername(::Type{<:AugmentedLagrangianSolver}) = :AugmentedLagrangian
 function dual_penalty_update!(solver::AugmentedLagrangianSolver)
     for convals in solver.solver_uncon.obj.convals
         for conval in convals
-            dual_update!(conval)
-            penalty_update!(conval)
+            TO.dual_update!(conval)
+            TO.penalty_update!(conval)
         end
     end
 end

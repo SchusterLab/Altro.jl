@@ -28,8 +28,7 @@ function solve!(solver::AugmentedLagrangianSolver{T,S}) where {T,S}
             break
         end
         # outer loop update
-        dual_update!(solver)
-        penalty_update!(solver)
+        dual_penalty_update!(solver)
         # reset verbosity level after it's modified
         set_verbosity!(solver)
         reset!(solver_uncon)

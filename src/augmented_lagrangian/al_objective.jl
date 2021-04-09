@@ -2,8 +2,6 @@
 al_objective.jl
 """
 
-@inline show_nice(x) = show(IOContext(stdout), "text/plain", x)
-
 struct ALObjective{O<:Objective} <: AbstractObjective
     obj::O
     convals::Vector{Vector{ConVal}}
@@ -30,7 +28,6 @@ function ALObjective(prob::Problem, opts::SolverOptions)
         end
         insert!(convals, length(convals) + 1, convals_)
     end
-    println(length(convals))
     O = typeof(obj)
     return ALObjective{O}(obj, convals)
 end
