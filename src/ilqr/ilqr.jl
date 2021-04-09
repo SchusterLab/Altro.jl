@@ -11,6 +11,8 @@ struct iLQRSolver{IR,Tm,To,Tix,Tiu,Txx,Tuu,Tux,Txu,Tx,Tu,TD,TG,T
     obj::To
     ix::Tix
     iu::Tiu
+    # TODO: mem bottleneck
+    # state at each time step: n X N
     X::Vector{Tx}
     X_tmp::Vector{Tx}
     U::Vector{Tu}
@@ -22,6 +24,7 @@ struct iLQRSolver{IR,Tm,To,Tix,Tiu,Txx,Tuu,Tux,Txu,Tx,Tu,TD,TG,T
     opts::SolverOptions{T}
     stats::SolverStats{T}
     # gains
+    # TODO: mem bottleneck
     # state feedback gains (m, n) x N
     K::Vector{Tux}
     # feedforward gains (m) x N
@@ -125,6 +128,8 @@ Base.size(solver::iLQRSolver) = solver.n, solver.m, solver.N
 @inline get_initial_state(solver::iLQRSolver) = solver.X[1]
 @inline TO.integration(solver::iLQRSolver{QUAD}) where {QUAD} = QUAD
 solvername(::Type{<:iLQRSolver}) = :iLQR
+@inline TO.states(solver::iLQRSolver) = solver.X
+@inline TO.controls(solver::iLQRSolver) = solver.U
 
 log_level(::iLQRSolver) = InnerLoop
 

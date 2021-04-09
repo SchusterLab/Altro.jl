@@ -47,7 +47,7 @@ function AugmentedLagrangianSolver(
     # set up al objective
     al_obj = ALObjective(prob, opts)
     # set up unconstrained solver
-    prob_al = Problem(IR, prob.model, al_obj, ConstraintList(size(prob)..., prob.V),
+    prob_al = Problem(IR, prob.model, al_obj, ConstraintList(),
                       prob.X, prob.U, prob.ts, prob.N, prob.M, prob.V)
     solver_uncon = solver_uncon(prob_al, opts, stats)
     # set up al solver
@@ -68,6 +68,8 @@ Base.size(solver::AugmentedLagrangianSolver) = size(solver.solver_uncon)
 @inline TrajectoryOptimization.integration(solver::AugmentedLagrangianSolver) = integration(solver.solver_uncon)
 solvername(::Type{<:AugmentedLagrangianSolver}) = :AugmentedLagrangian
 @inline TO.get_constraints(solver::AugmentedLagrangianSolver) = get_constraints(solver.solver_uncon)
+@inline TO.states(solver::AugmentedLagrangianSolver) = TO.states(solver.solver_uncon)
+@inline TO.controls(solver::AugmentedLagrangianSolver) = TO.controls(solver.solver_uncon)
 
 function dual_penalty_update!(solver::AugmentedLagrangianSolver)
     for convals in solver.solver_uncon.obj.convals
@@ -81,9 +83,10 @@ end
 function max_violation_penalty(solver::AugmentedLagrangianSolver)
     max_violation = 0.
     max_penalty = 0.
-    for convals in solver.solver_uncon.obj.convals
+    for (k, convals) in enumerate(solver.solver_uncon.obj.convals)
         for conval in convals
-            max_violation = max(max_violation, violation(conval))
+            viol = TO.violation(conval)
+            max_violation = max(max_violation, viol)
             max_penalty = max(max_penalty, maximum(conval.μ))
         end
     end
