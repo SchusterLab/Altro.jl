@@ -1,3 +1,6 @@
+"""
+al_solver.jl
+"""
 
 @doc raw""" ```julia
 struct AugmentedLagrangianSolver <: ConstrainedSolver{T}
@@ -34,31 +37,28 @@ Form an augmented Lagrangian cost function from a Problem and AugmentedLagrangia
     Does not allocate new memory for the internal arrays, but points to the arrays in the solver.
 """
 function AugmentedLagrangianSolver(
-        prob::Problem{Q,T}, 
+        prob::Problem{IR}, 
         opts::SolverOptions=SolverOptions(), 
         stats::SolverStats=SolverStats(parent=solvername(AugmentedLagrangianSolver));
         solver_uncon=iLQRSolver,
         kwarg_opts...
-    ) where {Q,T}
+    ) where {IR}
     set_options!(opts; kwarg_opts...)
-
-    # Build Augmented Lagrangian Objective
-    alobj = ALObjective(prob)
-    rollout!(prob)
-    prob_al = Problem{Q}(prob.model, alobj, ConstraintList(size(prob)...),
-        prob.x0, prob.xf, prob.Z, prob.N, prob.t0, prob.tf)
-
-    # Instantiate the unconstrained solver
+    # set up al objective
+    al_obj = ALObjective(prob, opts)
+    # set up unconstrained solver
+    prob_al = Problem(IR, prob.model, al_obj, ConstraintList(size(prob)..., prob.V),
+                      prob.X, prob.U, prob.ts, prob.N, prob.M, prob.V)
     solver_uncon = solver_uncon(prob_al, opts, stats)
-
-    # Build solver
-    solver = AugmentedLagrangianSolver(opts, stats, solver_uncon)
+    # set up al solver
+    T = Float64
+    S = typeof(solver_uncon)
+    solver = AugmentedLagrangianSolver{T,S}(opts, stats, solver_uncon)
     reset!(solver)
-    # set_options!(solver; opts...)
     return solver
 end
 
-# Getters
+# methods
 Base.size(solver::AugmentedLagrangianSolver) = size(solver.solver_uncon)
 @inline TO.cost(solver::AugmentedLagrangianSolver) = TO.cost(solver.solver_uncon)
 @inline TO.get_trajectory(solver::AugmentedLagrangianSolver) = get_trajectory(solver.solver_uncon)
@@ -67,13 +67,30 @@ Base.size(solver::AugmentedLagrangianSolver) = size(solver.solver_uncon)
 @inline get_initial_state(solver::AugmentedLagrangianSolver) = get_initial_state(solver.solver_uncon)
 @inline TrajectoryOptimization.integration(solver::AugmentedLagrangianSolver) = integration(solver.solver_uncon)
 solvername(::Type{<:AugmentedLagrangianSolver}) = :AugmentedLagrangian
+@inline TO.get_constraints(solver::AugmentedLagrangianSolver) = get_constraints(solver.solver_uncon)
 
-function TO.get_constraints(solver::AugmentedLagrangianSolver{T}) where T
-    obj = get_objective(solver)::ALObjective{T}
-    obj.constraints
+function dual_penalty_update!(solver::AugmentedLagrangianSolver)
+    for convals in solver.solver_uncon.obj.convals
+        for conval in convals
+            dual_update!(conval)
+            penalty_update!(conval)
+        end
+    end
 end
 
-# Options methods
+function max_violation_penalty(solver::AugmentedLagrangianSolver)
+    max_violation = 0.
+    max_penalty = 0.
+    for convals in solver.solver_uncon.obj.convals
+        for conval in convals
+            max_violation = max(max_violation, violation(conval))
+            max_penalty = max(max_penalty, maximum(conval.μ))
+        end
+    end
+    return max_violation, max_penalty
+end
+
+# options methods
 function set_verbosity!(solver::AugmentedLagrangianSolver)
     llevel = log_level(solver) 
     if is_verbose(solver)
@@ -93,6 +110,16 @@ end
 
 
 function reset!(solver::AugmentedLagrangianSolver)
-    reset_solver!(solver)
+    # reset stats
+    reset!(solver.stats, solver.opts.iterations, :AugmentedLagrangian)
+    # reset duals and penalties
+    for convals in solver.solver_uncon.obj.convals
+        for conval in convals
+            conval.λ .= 0
+            conval.μ .= conval.params.μ0
+        end
+    end
+    # reset unconstrained solver
     reset!(solver.solver_uncon)
+    return nothing
 end

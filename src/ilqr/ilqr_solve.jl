@@ -11,8 +11,6 @@ function solve!(solver::iLQRSolver{IR}) where {IR}
     solver.ρ[1] = solver.opts.bp_reg_initial
     solver.dρ[1] = 0.0
     n, m, N = size(solver)
-    stage_cost = solver.obj.stage_cost
-    terminal_cost = solver.obj.terminal_cost
     X = solver.X
     U = solver.U
     ts = solver.ts
@@ -20,11 +18,12 @@ function solve!(solver::iLQRSolver{IR}) where {IR}
     # initial rollout and cost calculation
     J_prev = 0.
     for k = 1:N-1
-        J_prev += TO.stage_cost(stage_cost, X[k], U[k])
+        J_prev += TO.cost(solver.obj, k, X[k], U[k])
         dt = ts[k + 1] - ts[k]
         RobotDynamics.discrete_dynamics!(X[k + 1], IR, solver.model, X[k], U[k], ts[k], dt)
     end
-    J_prev += TO.stage_cost(terminal_cost, X[N])
+    J_prev += TO.cost(solver.obj, N, X[N])
+    J = J_prev
 
     # run iLQR iterations
     for i = 1:solver.opts.iterations
@@ -65,7 +64,7 @@ function solve!(solver::iLQRSolver{IR}) where {IR}
         end
     end
     terminate!(solver)
-    return solver
+    return J
 end
 
 
@@ -76,10 +75,6 @@ projecting the system on the dynamically feasible subspace. Performs a line sear
 adequate progress on the nonlinear problem.
 """
 function forwardpass!(solver::iLQRSolver, J_prev)
-    obj = solver.obj
-    stage_cost = solver.obj.stage_cost
-    terminal_cost = solver.obj.terminal_cost
-    N = solver.N
     ΔV = solver.ΔV
     J = Inf
     α = 1.0

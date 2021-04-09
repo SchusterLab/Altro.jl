@@ -129,7 +129,9 @@ solvername(::Type{<:iLQRSolver}) = :iLQR
 log_level(::iLQRSolver) = InnerLoop
 
 function reset!(solver::iLQRSolver{T}) where T
-    reset_solver!(solver)
+    # reset stats
+    reset!(solver.stats, solver.opts.iterations, :iLQR)
+    # reset regularization
     solver.ρ[1] = 0.0
     solver.dρ[1] = 0.0
     return nothing

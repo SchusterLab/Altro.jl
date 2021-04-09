@@ -9,8 +9,6 @@ Cost-to-Go, using a backward Riccati-style recursion. (non-allocating)
 function backwardpass!(solver::iLQRSolver{IR}) where {IR}
     # initialize
     model = solver.model
-    stage_cost = solver.obj.stage_cost
-    terminal_cost = solver.obj.terminal_cost
     ix = solver.ix
     iu = solver.iu
     X = solver.X
@@ -41,8 +39,8 @@ function backwardpass!(solver::iLQRSolver{IR}) where {IR}
     ΔV = solver.ΔV
 
     # terminal (cost and action-value) expansions
-    TO.gradient!(E, terminal_cost, X[N])
-    TO.hessian!(E, terminal_cost, X[N])
+    ΔV .= 0
+    TO.cost_derivatives!(E, solver.obj, N, X[N])
     P .= E.Q
     p .= E.q
 
@@ -51,8 +49,7 @@ function backwardpass!(solver::iLQRSolver{IR}) where {IR}
 	# dynamics and cost expansions
         dt = ts[k + 1] - ts[k]
 	RD.discrete_jacobian!(D, A, B, IR, model, X[k], U[k], ts[k], dt, ix, iu)
-        TO.gradient!(E, stage_cost, X[k], U[k])
-        TO.hessian!(E, stage_cost, X[k], U[k])
+        TO.cost_derivatives!(E, solver.obj, k, X[k], U[k])
 
 	# action-value expansion
         _calc_Q!(Qxx, Qxx_tmp, Quu, Qux, Qux_tmp, Qx, Qu, E, A, B, P, p)
@@ -72,8 +69,8 @@ function backwardpass!(solver::iLQRSolver{IR}) where {IR}
                 regularization_update!(solver, :increase)
                 k = N-1
                 ΔV .= 0
-                TO.gradient!(E, terminal_cost, X[N])
-                TO.hessian!(E, terminal_cost, X[N])
+                TO.gradient!(E, solver.obj, N, X[N])
+                TO.hessian!(E, solver.obj, N, X[N])
                 P .= E.Q
                 p .= E.q
                 continue
@@ -119,7 +116,7 @@ function static_backwardpass!(solver::iLQRSolver{T,QUAD,L,O,n,n̄,m}) where {
     # Initialize expected change in cost-to-go
     ΔV = @SVector zeros(2)
 
-	k = N-1
+    k = N-1
     while k > 0
         ix = Z[k]._x
         iu = Z[k]._u

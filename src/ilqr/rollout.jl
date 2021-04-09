@@ -15,8 +15,6 @@ function rollout!(solver::iLQRSolver{IR}, α) where {IR}
     ts = solver.ts
     K = solver.K
     d = solver.d
-    stage_cost = solver.obj.stage_cost
-    terminal_cost = solver.obj.terminal_cost
     J = 0.
 
     X_tmp[1] .= X[1]
@@ -32,7 +30,7 @@ function rollout!(solver::iLQRSolver{IR}, α) where {IR}
         RobotDynamics.discrete_dynamics!(X_tmp[k + 1], IR, solver.model, X_tmp[k],
                                          U_tmp[k], ts[k], dt)
         # compute cost
-        J += TrajectoryOptimization.stage_cost(stage_cost, X_tmp[k], U_tmp[k])
+        J += TrajectoryOptimization.cost(solver.obj, k, X_tmp[k], U_tmp[k])
         max_x = norm(X_tmp[k + 1], Inf)
         if max_x > solver.opts.max_state_value || isnan(max_x)
             solver.stats.status = STATE_LIMIT
@@ -44,7 +42,7 @@ function rollout!(solver::iLQRSolver{IR}, α) where {IR}
             return 0., false
         end
     end
-    J += TrajectoryOptimization.stage_cost(terminal_cost, X_tmp[N])
+    J += TrajectoryOptimization.cost(solver.obj, N, X_tmp[N])
     solver.stats.status = UNSOLVED
     return J, true
 end

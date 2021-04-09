@@ -29,12 +29,13 @@ using TrajectoryOptimization:
     Problem,
     ConstraintList,
     AbstractObjective, Objective, QuadraticCost,
-    AbstractTrajectory,
-    DynamicsExpansion, # TODO: Move to ALTRO
-    ALConstraintSet,
-    DynamicsConstraint,
-    Traj,
-    states, controls
+    # AbstractTrajectory,
+    # DynamicsExpansion, # TODO: Move to ALTRO
+    # ALConstraintSet,
+    # DynamicsConstraint,
+    # Traj,
+    states, controls,
+    ConVal
 
 using RobotDynamics:
     AbstractModel,
@@ -47,7 +48,7 @@ using RobotDynamics:
 export
     # ALTROSolver,
     iLQRSolver,
-    # AugmentedLagrangianSolver,
+    AugmentedLagrangianSolver,
     SolverStats,
     SolverOptions
 
@@ -72,9 +73,9 @@ include("ilqr/ilqr.jl")
 include("ilqr/ilqr_solve.jl")
 include("ilqr/backwardpass.jl")
 include("ilqr/rollout.jl")
-# include("augmented_lagrangian/al_solver.jl")
-# include("augmented_lagrangian/al_objective.jl")
-# include("augmented_lagrangian/al_methods.jl")
+include("augmented_lagrangian/al_solver.jl")
+include("augmented_lagrangian/al_objective.jl")
+include("augmented_lagrangian/al_methods.jl")
 # include("direct/primals.jl")
 # include("direct/pn.jl")
 # include("direct/pn_methods.jl")

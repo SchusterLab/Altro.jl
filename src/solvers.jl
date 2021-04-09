@@ -167,51 +167,51 @@ function TO.cost(solver::AbstractSolver, Z=get_trajectory(solver))
     TO.cost(obj, Z)
 end
 
-function TO.cost_expansion!(solver::AbstractSolver)
-    Z = get_trajectory(solver)
-    E, obj = get_cost_expansion(solver), get_objective(solver)
-    cost_expansion!(E, obj, Z)
-end
+# function TO.cost_expansion!(solver::AbstractSolver)
+#     Z = get_trajectory(solver)
+#     E, obj = get_cost_expansion(solver), get_objective(solver)
+#     cost_expansion!(E, obj, Z)
+# end
 
-TO.error_expansion!(solver::AbstractSolver) = error_expansion_uncon!(solver)
+# TO.error_expansion!(solver::AbstractSolver) = error_expansion_uncon!(solver)
 
-""" $(SIGNATURES)
-Calculate all the constraint values given the trajectory `Z`
-"""
-function update_constraints!(solver::ConstrainedSolver, Z::Traj=get_trajectory(solver))
-    conSet = get_constraints(solver)
-    TO.evaluate!(conSet, Z)
-end
+# """ $(SIGNATURES)
+# Calculate all the constraint values given the trajectory `Z`
+# """
+# function update_constraints!(solver::ConstrainedSolver, Z::Traj=get_trajectory(solver))
+#     conSet = get_constraints(solver)
+#     TO.evaluate!(conSet, Z)
+# end
 
-function TO.update_active_set!(solver::ConstrainedSolver, 
-        Z=get_trajectory(solver); tol=solver.opts.active_set_tolerance)
-    conSet = get_constraints(solver)
-    TO.update_active_set!(conSet, Val(tol))
-end
+# function TO.update_active_set!(solver::ConstrainedSolver, 
+#         Z=get_trajectory(solver); tol=solver.opts.active_set_tolerance)
+#     conSet = get_constraints(solver)
+#     TO.update_active_set!(conSet, Val(tol))
+# end
 
-""" $(SIGNATURES)
-Calculate all the constraint Jacobians given the trajectory `Z`
-"""
-function constraint_jacobian!(solver::ConstrainedSolver, Z=get_trajectory(solver))
-    conSet = get_constraints(solver)
-    TO.jacobian!(conSet, Z)
-    return nothing
-end
+# """ $(SIGNATURES)
+# Calculate all the constraint Jacobians given the trajectory `Z`
+# """
+# function constraint_jacobian!(solver::ConstrainedSolver, Z=get_trajectory(solver))
+#     conSet = get_constraints(solver)
+#     TO.jacobian!(conSet, Z)
+#     return nothing
+# end
 
-#--- Error Expansion ---#
-function error_expansion_uncon!(solver::AbstractSolver)
-    E  = get_cost_expansion_error(solver)
-    E0 = get_cost_expansion(solver)
-    G  = get_error_state_jacobians(solver)
-    error_expansion!(E, E0, get_model(solver), G)
-end
+# #--- Error Expansion ---#
+# function error_expansion_uncon!(solver::AbstractSolver)
+#     E  = get_cost_expansion_error(solver)
+#     E0 = get_cost_expansion(solver)
+#     G  = get_error_state_jacobians(solver)
+#     error_expansion!(E, E0, get_model(solver), G)
+# end
 
-function TO.error_expansion!(solver::ConstrainedSolver)
-    error_expansion_uncon!(solver)
-    conSet = get_constraints(solver)
-    G = get_error_state_jacobians(solver)
-    error_expansion!(conSet, get_model(solver), G)
-end
+# function TO.error_expansion!(solver::ConstrainedSolver)
+#     error_expansion_uncon!(solver)
+#     conSet = get_constraints(solver)
+#     G = get_error_state_jacobians(solver)
+#     error_expansion!(conSet, get_model(solver), G)
+# end
 
 #--- Gradient Norm ---#
 function norm_grad(solver::UnconstrainedSolver, recalculate::Bool=true)
@@ -249,12 +249,12 @@ TO.set_initial_state!(solver::AbstractSolver, x0) = copyto!(get_initial_state(so
 
 @inline TO.initial_states!(solver::AbstractSolver, X0) = RobotDynamics.set_states!(get_trajectory(solver), X0)
 @inline TO.initial_controls!(solver::AbstractSolver, U0) = RobotDynamics.set_controls!(get_trajectory(solver), U0)
-function TO.initial_trajectory!(solver::AbstractSolver, Z0::Traj)
-    Z = get_trajectory(solver)
-    for k in eachindex(Z)
-        RobotDynamics.set_z!(Z[k], Z0[k].z)
-    end
-end
+# function TO.initial_trajectory!(solver::AbstractSolver, Z0::Traj)
+#     Z = get_trajectory(solver)
+#     for k in eachindex(Z)
+#         RobotDynamics.set_z!(Z[k], Z0[k].z)
+#     end
+# end
 
 # Default getters
 @inline RobotDynamics.get_times(solver::AbstractSolver) = 
@@ -280,21 +280,21 @@ end
 # Constrained solver
 TO.num_constraints(solver::AbstractSolver) = num_constraints(get_constraints(solver))
 
-function TO.max_violation(solver::ConstrainedSolver, Z::Traj=get_trajectory(solver); recalculate=true)
-    conSet = get_constraints(solver)
-    if recalculate
-        TO.evaluate!(conSet, Z)
-    end
-    TO.max_violation(conSet)
-end
+# function TO.max_violation(solver::ConstrainedSolver, Z::Traj=get_trajectory(solver); recalculate=true)
+#     conSet = get_constraints(solver)
+#     if recalculate
+#         TO.evaluate!(conSet, Z)
+#     end
+#     TO.max_violation(conSet)
+# end
 
-function TO.norm_violation(solver::ConstrainedSolver, Z::Traj=get_trajectory(solver); recalculate=true, p=2)
-    conSet = get_constraints(solver)
-    if recalculate
-        evaluate!(conSet, Z)
-    end
-    TO.norm_violation(conSet, p)
-end
+# function TO.norm_violation(solver::ConstrainedSolver, Z::Traj=get_trajectory(solver); recalculate=true, p=2)
+#     conSet = get_constraints(solver)
+#     if recalculate
+#         evaluate!(conSet, Z)
+#     end
+#     TO.norm_violation(conSet, p)
+# end
 
 @inline findmax_violation(solver::ConstrainedSolver) =
     findmax_violation(get_constraints(solver))
