@@ -17,6 +17,7 @@ function backwardpass!(solver::iLQRSolver{IR}) where {IR}
     m = solver.m
     N = solver.N
     K = solver.K
+    K_dense = solver.K_dense
     d = solver.d
     D = solver.D
     A = solver.A
@@ -26,6 +27,7 @@ function backwardpass!(solver::iLQRSolver{IR}) where {IR}
     Qxx = solver.Qxx
     Qxx_tmp = solver.Qxx_tmp
     Quu = solver.Quu
+    Quu_dense = solver.Quu_dense
     Quu_reg = solver.Quu_reg
     Qux = solver.Qux
     Qux_tmp = solver.Qux_tmp
@@ -46,42 +48,33 @@ function backwardpass!(solver::iLQRSolver{IR}) where {IR}
 
     k = N-1
     while k > 0
-	# dynamics and cost expansions
+	    # dynamics and cost expansions
         dt = ts[k + 1] - ts[k]
-	RD.discrete_jacobian!(D, A, B, IR, model, X[k], U[k], ts[k], dt, ix, iu)
+	    RD.discrete_jacobian!(D, A, B, IR, model, X[k], U[k], ts[k], dt, ix, iu)
         TO.cost_derivatives!(E, solver.obj, k, X[k], U[k])
 
-	# action-value expansion
+	    # action-value expansion
         _calc_Q!(Qxx, Qxx_tmp, Quu, Qux, Qux_tmp, Qx, Qu, E, A, B, P, p)
 
-	# regularization
-	Quu_reg .= Quu
-        for i = 1:m
-            Quu_reg[i, i] += solver.ρ[1]
-        end
-	Qux_reg .= Qux
-
-	if solver.opts.bp_reg
-            println("regularized")
-	    vals = eigvals(Hermitian(Quu_reg))
-	    if minimum(vals) <= 0
-	        @warn "Backward pass regularized"
-                regularization_update!(solver, :increase)
-                k = N-1
-                ΔV .= 0
-                TO.gradient!(E, solver.obj, N, X[N])
-                TO.hessian!(E, solver.obj, N, X[N])
-                P .= E.Q
-                p .= E.q
-                continue
-            end
+	    # regularization
+        reg_flag = _bp_reg!(Quu, Quu_reg, Qux, Qux_reg, A, B, solver.ρ[1], solver.opts.bp_reg_type)
+        if solver.opts.bp_reg && reg_flag
+            @warn "Backward pass regularized"
+            regularization_update!(solver, :increase)
+            k = N-1
+            ΔV .= 0
+            TO.gradient!(E, solver.obj, N, X[N])
+            TO.hessian!(E, solver.obj, N, X[N])
+            P .= E.Q
+            p .= E.q
+            continue
         end
 
         # gains
-        _calc_gains!(K[k], d[k], Quu_reg, Qux_reg, Qu)
+        _calc_gains!(K[k], K_dense, d[k], Quu_reg, Quu_dense, Qux_reg, Qu)
         
-	# cost-to-go (using unregularized Quu and Qux)
-	_calc_ctg!(ΔV, P, P_tmp, p, p_tmp, K[k], d[k], Qxx, Quu, Qux, Qx, Qu)
+	    # cost-to-go (using unregularized Quu and Qux)
+	    _calc_ctg!(ΔV, P, P_tmp, p, p_tmp, K[k], d[k], Qxx, Quu, Qux, Qx, Qu)
 
         k -= 1
     end
@@ -165,29 +158,45 @@ function static_backwardpass!(solver::iLQRSolver{T,QUAD,L,O,n,n̄,m}) where {
     return ΔV
 end
 
-function _bp_reg!(Quu_reg::SizedMatrix{m,m}, Qux_reg, Q, fdx, fdu, ρ, ver=:control) where {m}
-    if ver == :state
-        Quu_reg .= Q.uu #+ solver.ρ[1]*fdu'fdu
-		mul!(Quu_reg, Transpose(fdu), fdu, ρ, 1.0)
-        Qux_reg .= Q.ux #+ solver.ρ[1]*fdu'fdx
-		mul!(Qux_reg, fdu', fdx, ρ, 1.0)
-    elseif ver == :control
-        Quu_reg .= Q.uu #+ solver.ρ[1]*I
-		Quu_reg .+= ρ*Diagonal(@SVector ones(m))
-        Qux_reg .= Q.ux
-    end
-end
+# function _bp_reg!(Quu_reg::SizedMatrix{m,m}, Qux_reg, Q, fdx, fdu, ρ, ver=:control) where {m}
+#     if ver == :state
+#         Quu_reg .= Q.uu #+ solver.ρ[1]*fdu'fdu
+# 		mul!(Quu_reg, Transpose(fdu), fdu, ρ, 1.0)
+#         Qux_reg .= Q.ux #+ solver.ρ[1]*fdu'fdx
+# 		mul!(Qux_reg, fdu', fdx, ρ, 1.0)
+#     elseif ver == :control
+#         Quu_reg .= Q.uu #+ solver.ρ[1]*I
+# 		Quu_reg .+= ρ*Diagonal(@SVector ones(m))
+#         Qux_reg .= Q.ux
+#     end
+# end
 
-function _bp_reg!(Q, fdx, fdu, ρ, ver=:control)
-    if ver == :state
-		Quu_reg = Q.uu + ρ * fdu'fdu
-		Qux_reg = Q.ux + ρ * fdu'fdx
-    elseif ver == :control
-		Quu_reg = Q.uu + ρ * I
-        Qux_reg = Q.ux
+function _bp_reg!(Quu, Quu_reg, Qux, Qux_reg, A, B, ρ, type_)
+    reg_flag = false
+    if type_ == :state
+        # perform regularization
+        mul!(Quu_reg, Transpose(B), B)
+        for i in eachindex(Quu_reg)
+            Quu_reg[i] = Quu[i] + ρ * Quu_reg[i]
+        end
+        mul!(Qux_reg, Transpose(B), A)
+        for i in eachindex(Qux_reg)
+            Qux_reg[i] = Qux[i] + ρ * Qux_reg[i]
+        end
+    elseif type_ == :control
+        # perform regularization
+		Quu_reg .= Quu
+        for i = 1:size(Quu_reg, 1)
+            Quu_reg[i, i] += ρ
+        end
+        Qux_reg .= Qux
+        # check for ill-conditioning
+        vals = eigvals(Hermitian(Quu_reg))
+        if minimum(vals) <= 0
+            reg_flag = true
+        end
     end
-
-	Quu_reg, Qux_reg
+    return reg_flag
 end
 
 function _calc_Q!(Qxx, Qxx_tmp, Quu, Qux, Qux_tmp, Qx, Qu, E, A, B, P, p)
@@ -221,14 +230,20 @@ end
 # end
 
 
-function _calc_gains!(K::AbstractMatrix, d::AbstractVector, Quu::AbstractMatrix,
+function _calc_gains!(K::AbstractMatrix, K_dense::AbstractMatrix,
+                      d::AbstractVector, Quu::AbstractMatrix,
+                      Quu_dense::AbstractMatrix,
                       Qux::AbstractMatrix, Qu::AbstractVector)
-    LAPACK.potrf!('U', Quu)
-    K .= Qux
+    Quu_dense .= Quu
+    LAPACK.potrf!('U', Quu_dense)
+    K_dense .= Qux
     d .= Qu
-    LAPACK.potrs!('U', Quu, K)
-    LAPACK.potrs!('U', Quu, d)
-    K .*= -1
+    LAPACK.potrs!('U', Quu_dense, K_dense)
+    LAPACK.potrs!('U', Quu_dense, d)
+    Quu .= Quu_dense
+    for i in eachindex(K_dense)
+        K[i] = -1 * K_dense[i]
+    end
     d .*= -1
     return nothing
 end

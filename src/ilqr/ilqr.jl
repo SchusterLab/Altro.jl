@@ -5,7 +5,7 @@ ilqr.jl
 using TrajectoryOptimization
 const TO = TrajectoryOptimization
 
-struct iLQRSolver{IR,Tm,To,Tix,Tiu,Txx,Tuu,Tux,Txu,Tx,Tu,TD,TG,T
+struct iLQRSolver{IR,Tm,To,Tix,Tiu,Txx,Tuu,Tuud,Tux,Tuxd,Txu,Tx,Tu,TD,TG,T
                   } <: UnconstrainedSolver{T}
     model::Tm
     obj::To
@@ -27,6 +27,7 @@ struct iLQRSolver{IR,Tm,To,Tix,Tiu,Txx,Tuu,Tux,Txu,Tx,Tu,TD,TG,T
     # TODO: mem bottleneck
     # state feedback gains (m, n) x N
     K::Vector{Tux}
+    K_dense::Tuxd
     # feedforward gains (m) x N
     d::Vector{Tu}
     # discrete dynamics jacobians
@@ -43,6 +44,7 @@ struct iLQRSolver{IR,Tm,To,Tix,Tiu,Txx,Tuu,Tux,Txu,Tx,Tu,TD,TG,T
     Qxx::Txx
     Qxx_tmp::Txx
     Quu::Tuu
+    Quu_dense::Tuud
     Quu_reg::Tuu
     Qux::Tux
     Qux_tmp::Tux
@@ -65,7 +67,7 @@ struct iLQRSolver{IR,Tm,To,Tix,Tiu,Txx,Tuu,Tux,Txu,Tx,Tu,TD,TG,T
 end
 
 
-function iLQRSolver(prob::Problem{IR,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,T},
+function iLQRSolver(prob::Problem{IR,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,T},
                     opts::SolverOptions=SolverOptions(), 
                     stats::SolverStats=SolverStats(parent=solvername(iLQRSolver));
                     kwarg_opts...) where {IR,T}
@@ -73,10 +75,12 @@ function iLQRSolver(prob::Problem{IR,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<
     n, m, N = size(prob)
     n̄ = RobotDynamics.state_diff_size(prob.model)
     M = prob.M
+    Md = prob.Md
     V = prob.V
     X_tmp = [V(zeros(T, n)) for k = 1:N+1] # 1 extra
     U_tmp = [V(zeros(T, m)) for k = 1:N+1] # 2 extra
     K = [M(zeros(T, m, n̄)) for k = 1:N-1]
+    K_dense = Md(zeros(T, m, n̄))
     d = [V(zeros(T, m)) for k = 1:N-1]
     D = M(zeros(T, n, n + m))
     A = M(zeros(T, n, n))
@@ -85,6 +89,7 @@ function iLQRSolver(prob::Problem{IR,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<
     Qxx = M(zeros(T, n, n))
     Qxx_tmp = copy(Qxx)
     Quu = M(zeros(T, m, m))
+    Quu_dense = Md(zeros(T, m, m))
     Quu_reg = copy(Quu)
     Qux = M(zeros(T, m, n))
     Qux_tmp = copy(Qux)
@@ -107,16 +112,19 @@ function iLQRSolver(prob::Problem{IR,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<
     Tiu = typeof(prob.iu)
     Txx = typeof(Qxx)
     Tuu = typeof(Quu)
+    Tuud = typeof(Quu_dense)
     Tux = typeof(Qux)
+    Tuxd = typeof(K_dense)
     Txu = typeof(B)
     Tx = typeof(Qx)
     Tu = typeof(Qu)
     TD = typeof(D)
     TG = typeof(G)
-    solver = iLQRSolver{IR,Tm,To,Tix,Tiu,Txx,Tuu,Tux,Txu,Tx,Tu,TD,TG,T}(
+    solver = iLQRSolver{IR,Tm,To,Tix,Tiu,Txx,Tuu,Tuud,Tux,Tuxd,Txu,Tx,Tu,TD,TG,T}(
         prob.model, prob.obj, prob.ix, prob.iu, prob.X, X_tmp, prob.U, U_tmp, prob.ts,
-        n, m, N, opts, stats, K, d, D, A, B, G, E, Qxx, Qxx_tmp, Quu, Quu_reg, Qux,
-        Qux_tmp, Qux_reg, Qx, Qu, P, P_tmp, p, p_tmp, ΔV, ρ, dρ, grad, logger)
+        n, m, N, opts, stats, K, K_dense, d, D, A, B, G, E, Qxx, Qxx_tmp, Quu, Quu_dense,
+        Quu_reg, Qux, Qux_tmp, Qux_reg, Qx, Qu, P, P_tmp,
+        p, p_tmp, ΔV, ρ, dρ, grad, logger)
     reset!(solver)
     return solver
 end

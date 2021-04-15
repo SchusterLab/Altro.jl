@@ -31,12 +31,11 @@ function solve!(solver::iLQRSolver{IR}) where {IR}
         if solver.opts.static_bp
     	    static_backwardpass!(solver)
         else
-	    backwardpass!(solver)
+	        backwardpass!(solver)
         end
-        J = forwardpass!(solver, J_prev)
+        J, reg_flag = forwardpass!(solver, J_prev)
         # exit if solve succeeded
         if solver.stats.status > SOLVE_SUCCEEDED
-            println("solver.stats.status: $(solver.stats.status)")
             break
         end
         # accept the updated trajectory
@@ -50,7 +49,7 @@ function solve!(solver::iLQRSolver{IR}) where {IR}
         J_prev = J
         gradient_todorov!(solver)
         record_iteration!(solver, J, dJ)
-        exit = evaluate_convergence(solver, i)
+        exit = evaluate_convergence(solver, i, reg_flag)
         # print iteration
         if is_verbose(solver) 
             print_level(InnerLoop, global_logger())
@@ -81,7 +80,8 @@ function forwardpass!(solver::iLQRSolver, J_prev)
     iter = 0
     z = -1.0
     expected = 0.0
-    flag = true
+    rollout_flag = false
+    reg_flag = false
 
     while ((z ≤ solver.opts.line_search_lower_bound
             || z > solver.opts.line_search_upper_bound)
@@ -95,21 +95,19 @@ function forwardpass!(solver::iLQRSolver, J_prev)
             expected = 0.0
             regularization_update!(solver, :increase)
             solver.ρ[1] += solver.opts.bp_reg_fp
+            reg_flag = true
             break
         end
         # otherwise, rollout a new trajectory for current alpha
-        J, flag = rollout!(solver, α)
-        # println("rollout!")
+        J, rollout_flag = rollout!(solver, α)
         # reduce step size if rollout returns non-finite values (NaN or Inf)
-        if !flag
+        if rollout_flag
             println("flag")
             J = J_prev
             iter += 1
             α /= 2.0
             continue
         end
-
-        # println("J: $(J)")
         # update
         expected = -α*(ΔV[1] + α*ΔV[2])
         if expected > 0.0
@@ -132,7 +130,7 @@ function forwardpass!(solver::iLQRSolver, J_prev)
     @logmsg InnerLoop :α value=2*α
     @logmsg InnerLoop :ρ value=solver.ρ[1]
 
-    return J
+    return J, reg_flag
 end
 
 
@@ -179,15 +177,16 @@ end
 $(SIGNATURES)
 Check convergence conditions for iLQR
 """
-function evaluate_convergence(solver::iLQRSolver, ilqr_iterations::Int)
+function evaluate_convergence(solver::iLQRSolver, ilqr_iterations::Int, reg_flag::Bool)
     # Get current iterations
     i = solver.stats.iterations
     grad = solver.stats.gradient[i]
     dJ = solver.stats.dJ[i]
 
-    # Check for cost convergence
-    # must satisfy both 
-    if (0.0 <= dJ < solver.opts.cost_tolerance) && (grad < solver.opts.gradient_tolerance)
+    # If the change in cost is small, the gradient is small, and
+    # the last step was not a regularization step, we have converged
+    if ((0.0 <= dJ < solver.opts.cost_tolerance) && (grad < solver.opts.gradient_tolerance)
+        && !reg_flag)
         @logmsg InnerLoop "Cost criteria satisfied."
         solver.stats.status = SOLVE_SUCCEEDED
         return true
@@ -224,14 +223,17 @@ function regularization_update!(solver::iLQRSolver,status::Symbol=:increase)
     # println("reg $(status)")
     if status == :increase # increase regularization
         # @logmsg InnerLoop "Regularization Increased"
-        solver.dρ[1] = max(solver.dρ[1]*solver.opts.bp_reg_increase_factor, solver.opts.bp_reg_increase_factor)
-        solver.ρ[1] = max(solver.ρ[1]*solver.dρ[1], solver.opts.bp_reg_min)
+        solver.dρ[1] = max(solver.dρ[1] * solver.opts.bp_reg_increase_factor,
+                           solver.opts.bp_reg_increase_factor)
+        solver.ρ[1] = max(solver.ρ[1] * solver.dρ[1], solver.opts.bp_reg_min)
         # if solver.ρ[1] > solver.opts.bp_reg_max
         #     @warn "Max regularization exceeded"
         # end
     elseif status == :decrease # decrease regularization
         # TODO: Avoid divides by storing the decrease factor (divides are 10x slower)
-        solver.dρ[1] = min(solver.dρ[1]/solver.opts.bp_reg_increase_factor, 1.0/solver.opts.bp_reg_increase_factor)
-        solver.ρ[1] = solver.ρ[1]*solver.dρ[1]*(solver.ρ[1]*solver.dρ[1]>solver.opts.bp_reg_min)
+        solver.dρ[1] = min(solver.dρ[1] / solver.opts.bp_reg_increase_factor,
+                           1. / solver.opts.bp_reg_increase_factor)
+        solver.ρ[1] = solver.ρ[1] * solver.dρ[1] * (solver.ρ[1] * solver.dρ[1]
+                                                    > solver.opts.bp_reg_min)
     end
 end

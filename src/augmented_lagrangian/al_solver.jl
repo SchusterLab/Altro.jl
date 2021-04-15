@@ -48,7 +48,7 @@ function AugmentedLagrangianSolver(
     al_obj = ALObjective(prob, opts)
     # set up unconstrained solver
     prob_al = Problem(IR, prob.model, al_obj, ConstraintList(),
-                      prob.X, prob.U, prob.ts, prob.N, prob.M, prob.V)
+                      prob.X, prob.U, prob.ts, prob.N, prob.M, prob.Md, prob.V)
     solver_uncon = solver_uncon(prob_al, opts, stats)
     # set up al solver
     T = Float64

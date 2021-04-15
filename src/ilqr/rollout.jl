@@ -34,17 +34,17 @@ function rollout!(solver::iLQRSolver{IR}, α) where {IR}
         max_x = norm(X_tmp[k + 1], Inf)
         if max_x > solver.opts.max_state_value || isnan(max_x)
             solver.stats.status = STATE_LIMIT
-            return 0., false
+            return 0., true
         end
         max_u = norm(U_tmp[k], Inf)
         if max_u > solver.opts.max_control_value || isnan(max_u)
             solver.stats.status = CONTROL_LIMIT 
-            return 0., false
+            return 0., true
         end
     end
     J += TrajectoryOptimization.cost(solver.obj, N, X_tmp[N])
     solver.stats.status = UNSOLVED
-    return J, true
+    return J, false
 end
 
 "Simulate the forward the dynamics open-loop"
