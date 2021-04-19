@@ -46,7 +46,7 @@ using RobotDynamics:
 
 # types
 export
-    # ALTROSolver,
+    ALTROSolver,
     iLQRSolver,
     AugmentedLagrangianSolver,
     SolverStats,
@@ -76,15 +76,8 @@ include("ilqr/rollout.jl")
 include("augmented_lagrangian/al_solver.jl")
 include("augmented_lagrangian/al_objective.jl")
 include("augmented_lagrangian/al_methods.jl")
-# include("direct/primals.jl")
-# include("direct/pn.jl")
-# include("direct/pn_methods.jl")
-# include("altro/altro_solver.jl")
-
-# include("direct/copy_blocks.jl")
-# include("direct/direct_constraints.jl")
-
-# include("problems.jl")
-# include("deprecated.jl")
+include("direct/pn.jl")
+include("direct/pn_methods.jl")
+include("altro/altro_solver.jl")
 
 end # module

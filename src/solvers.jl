@@ -48,24 +48,8 @@ abstract type AbstractSolver{T} end
 iterations(solver::AbstractSolver) = stats(solver).iterations
 @inline options(solver::AbstractSolver) = solver.opts
 set_options!(solver::AbstractSolver; opts...) = set_options!(options(solver); opts...)
-reset!(solver::AbstractSolver) = reset_solver!(solver)  # default method
 solvername(solver::S) where S <: AbstractSolver = solvername(S)
 is_parentsolver(solver::AbstractSolver) = stats(solver).parent == solvername(solver)
-
-"""
-    reset_solver!(solver::AbstractSolver)
-
-Reset solver stats and constraints.
-"""
-function reset_solver!(solver::AbstractSolver)
-    # Reset the stats only if it's the top level solver
-    opts = options(solver)::SolverOptions
-    reset!(stats(solver), opts.iterations, solvername(solver))
-
-    if is_constrained(solver)
-        reset!(get_constraints(solver), opts)
-    end
-end
 
 """
     terminate!(solver::AbstractSolver)
@@ -99,8 +83,17 @@ end
 * `NO_PROGRESS`: iLQR was unable to make any progress for `dJ_counter_limit` consecutive iterations.
 * `COST_INCREASE`: The cost increased during the iLQR forward pass.
 """
-@enum(TerminationStatus, UNSOLVED, SOLVE_SUCCEEDED, MAX_ITERATIONS, MAX_ITERATIONS_OUTER,
-    MAXIMUM_COST, STATE_LIMIT, CONTROL_LIMIT, NO_PROGRESS, COST_INCREASE)
+@enum TerminationStatus begin
+    UNSOLVED = 1
+    MAX_ITERATIONS_OUTER = 2
+    MAX_ITERATIONS = 3
+    SOLVE_SUCCEEDED = 4
+    MAXIMUM_COST = 5
+    STATE_LIMIT = 6
+    CONTROL_LIMIT = 7
+    NO_PROGRESS = 8
+    COST_INCREASE = 9
+end
 
 @inline status(solver::AbstractSolver) = stats(solver).status
 

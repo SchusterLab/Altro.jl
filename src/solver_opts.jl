@@ -20,7 +20,7 @@ ALTRO and Augmented Lagrangian solvers accept integers 0-2, with 1 providing out
 for the outer AL iterations but not the iLQR iterations.
 """
 function set_options!(opts::OPT; d...) where OPT <: AbstractSolverOptions
-    for (key,val) in pairs(d)
+    for (key, val) in pairs(d)
         if hasfield(OPT, key) 
             val = convert(fieldtype(OPT, key), val)
             setfield!(opts, key, val) 
@@ -30,27 +30,18 @@ end
 
 
 @with_kw mutable struct SolverOptions{T} <: AbstractSolverOptions{T}
-    # Optimality Tolerances
-    constraint_tolerance::T = 1e-6
-    cost_tolerance::T = 1e-4
-    cost_tolerance_intermediate::T = 1e-4
-    gradient_tolerance::T = 10.0
-    gradient_tolerance_intermediate::T = 1.0
-
     # iLQR
-    iterations_inner::Int = 300
+    ilqr_max_iterations::Int = 300
     dJ_counter_limit::Int = 10
-    square_root::Bool = false
     line_search_lower_bound::T = 1e-8
     line_search_upper_bound::T = 10.0
-    iterations_linesearch::Int = 20
+    iterations_linesearch::Int = 10
     max_cost_value::T = 1.0e8
     max_state_value::T = 1.0e8
     max_control_value::T = 1.0e8
-    static_bp::Bool = false
-    save_S::Bool = false
-
-    # Backward pass regularization
+    ilqr_ctol::T = 1e-1
+    ilqr_gtol::T = 1e-4
+    # backward pass regularization
     bp_reg::Bool = false
     bp_reg_initial::T = 0.0
     bp_reg_increase_factor::T = 1.6
@@ -65,16 +56,17 @@ end
     active_set_tolerance_al::T = 1e-3
     dual_max::T = 1e8
     penalty_max::T = 1e8
-    iterations_outer::Int = 30
+    al_max_iterations::Int = 30
     kickout_max_penalty::Bool = false
     reset_duals::Bool = true
     reset_penalties::Bool = true
+    al_vtol::T = 1e-4
 
     # Projected Newton
     verbose_pn::Bool = false
     n_steps::Int = 2
     solve_type::Symbol = :feasible
-    projected_newton_tolerance::T = 1e-3
+    pn_vtol::T = 1e-8
     active_set_tolerance_pn::T = 1e-3
     multiplier_projection::Bool = true
     ρ_chol::T = 1e-2     # cholesky factorization regularization
@@ -82,7 +74,7 @@ end
     ρ_dual::T = 1.0e-8   # regularization for multiplier projection 
     r_threshold::T = 1.1
 
-    # General options
+    # general options
     projected_newton::Bool = true
     iterations::Int = 1000   # max number of iterations
     show_summary::Bool = false
@@ -123,7 +115,6 @@ end
     iterations::Int = 0
     iterations_outer::Int = 0
     iterations_pn::Int = 0
-
     # Iteration stats
     iteration::Vector{Int} = Int[] 
     iteration_outer::Vector{Int} = Int[]
@@ -133,10 +124,8 @@ end
     c_max::Vector{T} = Float64[]
     gradient::Vector{T} = Float64[] 
     penalty_max::Vector{T} = Float64[]
-
     # iLQR
     dJ_zero_counter::Int = 0
-
     # Other
     tstart::Float64 = time()
     tsolve::Float64 = Inf 

@@ -20,7 +20,7 @@ end
 "Copy constraints to a single concatenated vector"
 function copy_constraints!(d, solver::ConstrainedSolver)
     conSet = get_constraints(solver)
-    for (i,con) in enumerate(conSet.errvals)
+    for (i, con) in enumerate(conSet.errvals)
         copy_inds(d, con.vals, solver.con_inds[i])
     end
     return nothing

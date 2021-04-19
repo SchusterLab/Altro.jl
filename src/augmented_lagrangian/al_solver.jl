@@ -5,7 +5,8 @@ al_solver.jl
 @doc raw""" ```julia
 struct AugmentedLagrangianSolver <: ConstrainedSolver{T}
 ```
-Augmented Lagrangian (AL) is a standard tool for constrained optimization. For a trajectory optimization problem of the form:
+Augmented Lagrangian (AL) is a standard tool for constrained optimization.
+For a trajectory optimization problem of the form:
 ```math
 \begin{aligned}
   \min_{x_{0:N},u_{0:N-1}} \quad & \ell_f(x_N) + \sum_{k=0}^{N-1} \ell_k(x_k, u_k, dt) \\
@@ -18,14 +19,18 @@ AL methods form the following augmented Lagrangian function:
 ```math
 \begin{aligned}
     \ell_f(x_N) + &λ_N^T c_N(x_N) + c_N(x_N)^T I_{\mu_N} c_N(x_N) \\
-           & + \sum_{k=0}^{N-1} \ell_k(x_k,u_k,dt) + λ_k^T c_k(x_k,u_k) + c_k(x_k,u_k)^T I_{\mu_k} c_k(x_k,u_k)
+           & + \sum_{k=0}^{N-1} \ell_k(x_k,u_k,dt) + λ_k^T c_k(x_k,u_k)
++ c_k(x_k,u_k)^T I_{\mu_k} c_k(x_k,u_k)
 \end{aligned}
 ```
-This function is then minimized with respect to the primal variables using any unconstrained minimization solver (e.g. iLQR).
-    After a local minima is found, the AL method updates the Lagrange multipliers λ and the penalty terms μ and repeats the unconstrained minimization.
-    AL methods have superlinear convergence as long as the penalty term μ is updated each iteration.
+This function is then minimized with respect to the primal variables using any
+unconstrained minimization solver (e.g. iLQR).
+After a local minima is found, the AL method updates the Lagrange multipliers λ
+and the penalty terms μ and repeats the unconstrained minimization.
+AL methods have superlinear convergence as long as the penalty term μ
+is updated each iteration.
 """
-struct AugmentedLagrangianSolver{T,S<:AbstractSolver} <: ConstrainedSolver{T}
+struct AugmentedLagrangianSolver{T,S} <: ConstrainedSolver{T}
     opts::SolverOptions{T}
     stats::SolverStats{T}
     solver_uncon::S
@@ -34,24 +39,13 @@ end
 
 """$(TYPEDSIGNATURES)
 Form an augmented Lagrangian cost function from a Problem and AugmentedLagrangianSolver.
-    Does not allocate new memory for the internal arrays, but points to the arrays in the solver.
+Does not allocate new memory for the internal arrays, but points to the arrays in the solver.
 """
-function AugmentedLagrangianSolver(
-        prob::Problem{IR}, 
-        opts::SolverOptions=SolverOptions(), 
-        stats::SolverStats=SolverStats(parent=solvername(AugmentedLagrangianSolver));
-        solver_uncon=iLQRSolver,
-        kwarg_opts...
-    ) where {IR}
-    set_options!(opts; kwarg_opts...)
-    # set up al objective
-    al_obj = ALObjective(prob, opts)
+function AugmentedLagrangianSolver(prob::Problem{IR,T}, opts::SolverOptions,
+                                   stats::SolverStats; solver_uncon=iLQRSolver) where {IR,T}
     # set up unconstrained solver
-    prob_al = Problem(IR, prob.model, al_obj, ConstraintList(),
-                      prob.X, prob.U, prob.ts, prob.N, prob.M, prob.Md, prob.V)
-    solver_uncon = solver_uncon(prob_al, opts, stats)
-    # set up al solver
-    T = Float64
+    solver_uncon = solver_uncon(prob, opts, stats)
+    # put it all together
     S = typeof(solver_uncon)
     solver = AugmentedLagrangianSolver{T,S}(opts, stats, solver_uncon)
     reset!(solver)
@@ -59,39 +53,7 @@ function AugmentedLagrangianSolver(
 end
 
 # methods
-Base.size(solver::AugmentedLagrangianSolver) = size(solver.solver_uncon)
-@inline TO.cost(solver::AugmentedLagrangianSolver) = TO.cost(solver.solver_uncon)
-@inline TO.get_trajectory(solver::AugmentedLagrangianSolver) = get_trajectory(solver.solver_uncon)
-@inline TO.get_objective(solver::AugmentedLagrangianSolver) = get_objective(solver.solver_uncon)
-@inline TO.get_model(solver::AugmentedLagrangianSolver) = get_model(solver.solver_uncon)
-@inline get_initial_state(solver::AugmentedLagrangianSolver) = get_initial_state(solver.solver_uncon)
-@inline TrajectoryOptimization.integration(solver::AugmentedLagrangianSolver) = integration(solver.solver_uncon)
 solvername(::Type{<:AugmentedLagrangianSolver}) = :AugmentedLagrangian
-@inline TO.get_constraints(solver::AugmentedLagrangianSolver) = get_constraints(solver.solver_uncon)
-@inline TO.states(solver::AugmentedLagrangianSolver) = TO.states(solver.solver_uncon)
-@inline TO.controls(solver::AugmentedLagrangianSolver) = TO.controls(solver.solver_uncon)
-
-function dual_penalty_update!(solver::AugmentedLagrangianSolver)
-    for convals in solver.solver_uncon.obj.convals
-        for conval in convals
-            TO.dual_update!(conval)
-            TO.penalty_update!(conval)
-        end
-    end
-end
-
-function max_violation_penalty(solver::AugmentedLagrangianSolver)
-    max_violation = 0.
-    max_penalty = 0.
-    for (k, convals) in enumerate(solver.solver_uncon.obj.convals)
-        for conval in convals
-            viol = TO.violation(conval)
-            max_violation = max(max_violation, viol)
-            max_penalty = max(max_penalty, maximum(conval.μ))
-        end
-    end
-    return max_violation, max_penalty
-end
 
 # options methods
 function set_verbosity!(solver::AugmentedLagrangianSolver)
@@ -118,8 +80,13 @@ function reset!(solver::AugmentedLagrangianSolver)
     # reset duals and penalties
     for convals in solver.solver_uncon.obj.convals
         for conval in convals
+            conval.params.ϕ = solver.opts.penalty_scaling
+            conval.params.μ0 = solver.opts.penalty_initial
+            conval.params.μ_max = solver.opts.penalty_max
+            conval.params.λ_max = solver.opts.dual_max
             conval.λ .= 0
             conval.μ .= conval.params.μ0
+            conval.a .= false
         end
     end
     # reset unconstrained solver

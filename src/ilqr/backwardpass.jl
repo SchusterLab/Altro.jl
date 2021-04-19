@@ -42,7 +42,7 @@ function backwardpass!(solver::iLQRSolver{IR}) where {IR}
 
     # terminal (cost and action-value) expansions
     ΔV .= 0
-    TO.cost_derivatives!(E, solver.obj, N, X[N])
+    TO.cost_derivatives!(E, solver.obj, X, U, N)
     P .= E.Q
     p .= E.q
 
@@ -51,7 +51,7 @@ function backwardpass!(solver::iLQRSolver{IR}) where {IR}
 	    # dynamics and cost expansions
         dt = ts[k + 1] - ts[k]
 	    RD.discrete_jacobian!(D, A, B, IR, model, X[k], U[k], ts[k], dt, ix, iu)
-        TO.cost_derivatives!(E, solver.obj, k, X[k], U[k])
+        TO.cost_derivatives!(E, solver.obj, X, U, k)
 
 	    # action-value expansion
         _calc_Q!(Qxx, Qxx_tmp, Quu, Qux, Qux_tmp, Qx, Qu, E, A, B, P, p)
@@ -60,11 +60,11 @@ function backwardpass!(solver::iLQRSolver{IR}) where {IR}
         reg_flag = _bp_reg!(Quu, Quu_reg, Qux, Qux_reg, A, B, solver.ρ[1], solver.opts.bp_reg_type)
         if solver.opts.bp_reg && reg_flag
             @warn "Backward pass regularized"
+            println("bp regularized")
             regularization_update!(solver, :increase)
             k = N-1
             ΔV .= 0
-            TO.gradient!(E, solver.obj, N, X[N])
-            TO.hessian!(E, solver.obj, N, X[N])
+            TO.cost_derivatives!(E, solver.obj, N, X[N])
             P .= E.Q
             p .= E.q
             continue
@@ -173,28 +173,19 @@ end
 
 function _bp_reg!(Quu, Quu_reg, Qux, Qux_reg, A, B, ρ, type_)
     reg_flag = false
-    if type_ == :state
-        # perform regularization
-        mul!(Quu_reg, Transpose(B), B)
-        for i in eachindex(Quu_reg)
-            Quu_reg[i] = Quu[i] + ρ * Quu_reg[i]
-        end
-        mul!(Qux_reg, Transpose(B), A)
-        for i in eachindex(Qux_reg)
-            Qux_reg[i] = Qux[i] + ρ * Qux_reg[i]
-        end
-    elseif type_ == :control
-        # perform regularization
-		Quu_reg .= Quu
-        for i = 1:size(Quu_reg, 1)
-            Quu_reg[i, i] += ρ
-        end
-        Qux_reg .= Qux
-        # check for ill-conditioning
-        vals = eigvals(Hermitian(Quu_reg))
-        if minimum(vals) <= 0
-            reg_flag = true
-        end
+    # perform regularization
+    Quu_reg .= Quu
+    for i = 1:size(Quu_reg, 1)
+        Quu_reg[i, i] += ρ
+    end
+    mul!(Qux_reg, Transpose(B), A)
+    for i in eachindex(Qux_reg)
+        Qux_reg[i] = Qux[i] + ρ * Qux_reg[i]
+    end
+    # check for ill-conditioning
+    vals = eigvals(Hermitian(Quu_reg))
+    if minimum(vals) <= 0
+        reg_flag = true
     end
     return reg_flag
 end
@@ -211,6 +202,7 @@ function _calc_Q!(Qxx, Qxx_tmp, Quu, Qux, Qux_tmp, Qx, Qu, E, A, B, P, p)
     # Qux
     mul!(Qux_tmp, Transpose(B), P)
     mul!(Qux, Qux_tmp, A)
+    Qux .+= E.H
     # Qx
     mul!(Qx, Transpose(A), p)
     Qx .+= E.q
@@ -234,16 +226,21 @@ function _calc_gains!(K::AbstractMatrix, K_dense::AbstractMatrix,
                       d::AbstractVector, Quu::AbstractMatrix,
                       Quu_dense::AbstractMatrix,
                       Qux::AbstractMatrix, Qu::AbstractVector)
+    # compute cholesky decomp of Quu
     Quu_dense .= Quu
-    LAPACK.potrf!('U', Quu_dense)
+    (_, info) = LAPACK.potrf!('U', Quu_dense)
+    if info > 0
+        println("potrf!(Quu_dense): $(info)")
+    end
+    # compute K
     K_dense .= Qux
-    d .= Qu
     LAPACK.potrs!('U', Quu_dense, K_dense)
-    LAPACK.potrs!('U', Quu_dense, d)
-    Quu .= Quu_dense
     for i in eachindex(K_dense)
         K[i] = -1 * K_dense[i]
     end
+    # compute d
+    d .= Qu
+    LAPACK.potrs!('U', Quu_dense, d)
     d .*= -1
     return nothing
 end
@@ -259,7 +256,7 @@ end
 
 
 function _calc_ctg!(ΔV, P, P_, p, p_, K, d, Qxx, Quu, Qux, Qx, Qu)
-    # p = Qx + K' * Quu * d +K' * Qu + Qxu * d
+    # p = Qx + K' * Quu * d + K' * Qu + Qxu * d
     p .= Qx
     mul!(p_, Quu, d)
     mul!(p, Transpose(K), p_, 1.0, 1.0)

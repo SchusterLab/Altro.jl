@@ -1,126 +1,99 @@
-using RobotDynamics
-const RD = RobotDynamics
-
-struct DynamicsVals{T}
-    fVal::Vector{Vector{T}}
-    xMid::Vector{Vector{T}}
-    ∇f::AbstractVector
-end
-
-function DynamicsVals(dyn_con::DynamicsConstraint)
-	DynamicsVals(dyn_con.fVal, dyn_con.xMid, dyn_con.∇f)
-end
-
-struct ProblemInfo{T,N}
-    model::AbstractModel
-    obj::Objective
-    conSet::ALConstraintSet{T}
-    x0::Vector{T}
-    xf::Vector{T}
-end
-
-function ProblemInfo(prob::Problem{Q,T}) where {Q, T}
-    n = size(prob)[1]
-    ProblemInfo{T,n}(prob.model, prob.obj, ALConstraintSet(prob), prob.x0, prob.xf)
-end
-
+"""
+pn.jl
+"""
 
 """
 $(TYPEDEF)
 Projected Newton Solver
 Direct method developed by the REx Lab at Stanford University
 Achieves machine-level constraint satisfaction by projecting onto the feasible subspace.
-    It can also take a full Newton step by solving the KKT system.
+It can also take a full Newton step by solving the KKT system.
 This solver is to be used exlusively for solutions that are close to the optimal solution.
-    It is intended to be used as a "solution polishing" method for augmented Lagrangian methods.
+It is intended to be used as a "solution polishing" method for augmented Lagrangian methods.
 """
-struct ProjectedNewtonSolver{T,N,M,NM,V} <: ConstrainedSolver{T}
-    # Problem Info
-    prob::ProblemInfo{T,N}
-    Z::Traj{N,M,T,RD.GeneralKnotPoint{T,N,M,V}}
-    Z̄::Traj{N,M,T,RD.GeneralKnotPoint{T,N,M,V}}
-
+struct ProjectedNewtonSolver{T,Tm,To,Tx,Tix,Tu,Tiu,TH,Tg,TE,TD,Td} <: ConstrainedSolver{T}
+    # problem info
+    n::Int
+    m::Int
+    N::Int
+    model::Tm
+    obj::To
+    convals::Vector{Vector{ConVal}}
+    # trajectory
+    X::Vector{Tx}
+    X_tmp::Vector{Tx}
+    # state indices in global constraint
+    x_ginds::Vector{Tix}
+    U::Vector{Tu}
+    U_tmp::Vector{Tu}
+    # control indices in global constraint
+    u_ginds::Vector{Tiu}
+    # global derivatives
+    H::TH
+    g::Tg
+    E::TE
+    # global constraints
+    # constraint jacobian
+    D::TD
+    # constraint values
+    d::Td
+    # duals
+    λ::Td
+    # active set
+    a::Vector{Bool}
+    # misc
     opts::SolverOptions{T}
     stats::SolverStats{T}
-    P::Primals{T,N,M}
-    P̄::Primals{T,N,M}
-
-    H::SparseMatrixCSC{T,Int}
-    g::Vector{T}
-    # E::Vector{CostExpansion{T,N,N,M}}
-    E::QuadraticObjective{N,M,T}
-
-    D::SparseMatrixCSC{T,Int}
-    d::Vector{T}
-    λ::Vector{T}
-
-    dyn_vals::DynamicsVals{T}
-    active_set::Vector{Bool}
-
-    dyn_inds::Vector{Int}
-    con_inds::Vector{<:Vector}
 end
 
-function ProjectedNewtonSolver(prob::Problem{Q,T}, 
-        opts::SolverOptions=SolverOptions(), stats::SolverStats=SolverStats()) where {Q,T}
-    Z = prob.Z  # grab trajectory before copy to keep associativity
-    
-    prob = copy(prob)  # don't modify original problem
-
-    n,m,N = size(prob)
-    NN = n*N + m*(N-1)
-
-    # Add dynamics constraints
-    TO.add_dynamics_constraints!(prob, integration(prob), 1)
-    conSet = prob.constraints
-    NP = sum(num_constraints(conSet))
-
-    # Trajectory
-    prob_info = ProblemInfo(prob)
-    Z̄ = copy(prob.Z)
-
-    # Create concatenated primal vars
-    P = Primals(n,m,N)
-    P̄ = Primals(n,m,N)
-
-    # Allocate Cost Hessian & Gradient
-    H = spzeros(NN,NN)
-    g = zeros(NN)
-    # E = [CostExpansion{Float64}(n,m) for k = 1:N]
-    E = QuadraticObjective(n,m,N)
-
-    D = spzeros(NP,NN)
+function ProjectedNewtonSolver(prob::Problem{IR,T},
+                               opts::SolverOptions=SolverOptions(),
+                               stats::SolverStats=SolverStats()) where {IR,T}
+    n, m, N = size(prob)
+    NZ = n * N + m * (N - 1)
+    M = prob.M
+    V = prob.V
+    # derivatives
+    H = spzeros(NZ, NZ)
+    g = zeros(NZ)
+    # count number of constraint values
+    NP = 0
+    for convals_ in prob.convals
+        for conval in convals_
+            NP += length(conval.con)
+        end
+    end
+    # constraints
+    D = spzeros(NP, NZ)
     d = zeros(NP)
     λ = zeros(NP)
-
-    fVal = [zeros(n) for k = 1:N]
-    xMid = [zeros(n) for k = 1:N-1]
-    ∇F = [zeros(n,n+m+1) for k = 1:N]
-    dyn_vals = DynamicsVals{T}(fVal, xMid, ∇F)
-    active_set = zeros(Bool,NP)
-
-    con_inds = gen_con_inds(conSet)
-
-    # Set constant pieces of the Jacobian
-    xinds,uinds = P.xinds, P.uinds
-
-    dyn_inds = zeros(Int, n)
-    V = CuVector{T}
-    ProjectedNewtonSolver{T,n,m,n+m,V}(
-        prob_info, Z, Z̄, opts, stats, P, P̄, H, g, E, D, d, λ, dyn_vals,
-        active_set, dyn_inds, con_inds
+    a = zeros(Bool, NP)
+    # build x_ginds and u_ginds
+    x_ginds = [V((1:n) .+ k * (n + m)) for k = 0:N - 1]
+    u_ginds = [V((1:m) .+ (n + k * (n + m))) for k = 0:N - 2]
+    # put it all together
+    Tm = typeof(prob.model)
+    To = typeof(prob.obj)
+    Tx = eltype(prob.X)
+    Tix = eltype(x_ginds)
+    Tu = eltype(prob.U)
+    Tiu = eltype(u_ginds)
+    TH = typeof(H)
+    Tg = typeof(g)
+    TE = typeof(prob.E)
+    TD = typeof(D)
+    Td = typeof(d)
+    return ProjectedNewtonSolver{T,Tm,To,Tx,Tix,Tu,Tiu,TH,Tg,TE,TD,Td}(
+        n, m, N, prob.model, prob.obj, prob.convals, prob.X, prob.X_tmp, x_ginds,
+        prob.U, prob.U_tmp, u_ginds, H, g, prob.E, D, d, λ, a, opts, stats
     )
 end
 
-primals(solver::ProjectedNewtonSolver) = solver.P.Z
-primal_partition(solver::ProjectedNewtonSolver) = solver.P.xinds, solver.P.uinds
-
-# AbstractSolver interface
-Base.size(solver::ProjectedNewtonSolver{T,n,m}) where {T,n,m} = n,m,length(solver.Z)
-TO.get_model(solver::ProjectedNewtonSolver) = solver.prob.model
-TO.get_constraints(solver::ProjectedNewtonSolver) = solver.prob.conSet
-TO.get_trajectory(solver::ProjectedNewtonSolver) = solver.Z
-TO.get_objective(solver::ProjectedNewtonSolver) = solver.prob.obj
+# methods
+Base.size(solver::ProjectedNewtonSolver) = solver.n, solver.m, solver.N
+TO.get_model(solver::ProjectedNewtonSolver) = solver.model
+TO.get_constraints(solver::ProjectedNewtonSolver) = solver.prob.convals
+TO.get_objective(solver::ProjectedNewtonSolver) = solver.obj
 iterations(solver::ProjectedNewtonSolver) = solver.stats.iterations_pn
-get_active_set(solver::ProjectedNewtonSolver) = solver.active_set
+get_active_set(solver::ProjectedNewtonSolver) = solver.a
 solvername(::Type{<:ProjectedNewtonSolver}) = :ProjectedNewton

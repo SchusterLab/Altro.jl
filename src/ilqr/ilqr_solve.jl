@@ -16,23 +16,18 @@ function solve!(solver::iLQRSolver{IR}) where {IR}
     ts = solver.ts
 
     # initial rollout and cost calculation
-    J_prev = 0.
+    J = J_prev = 0.
     for k = 1:N-1
-        J_prev += TO.cost(solver.obj, k, X[k], U[k])
+        J_prev += TO.cost(solver.obj, X, U, k)
         dt = ts[k + 1] - ts[k]
         RobotDynamics.discrete_dynamics!(X[k + 1], IR, solver.model, X[k], U[k], ts[k], dt)
     end
-    J_prev += TO.cost(solver.obj, N, X[N])
-    J = J_prev
+    J_prev += TO.cost(solver.obj, X, U, N)
 
     # run iLQR iterations
-    for i = 1:solver.opts.iterations
+    for i = 1:solver.opts.ilqr_max_iterations
         # step
-        if solver.opts.static_bp
-    	    static_backwardpass!(solver)
-        else
-	        backwardpass!(solver)
-        end
+	    backwardpass!(solver)
         J, reg_flag = forwardpass!(solver, J_prev)
         # exit if solve succeeded
         if solver.stats.status > SOLVE_SUCCEEDED
@@ -102,7 +97,6 @@ function forwardpass!(solver::iLQRSolver, J_prev)
         J, rollout_flag = rollout!(solver, α)
         # reduce step size if rollout returns non-finite values (NaN or Inf)
         if rollout_flag
-            println("flag")
             J = J_prev
             iter += 1
             α /= 2.0
@@ -117,6 +111,7 @@ function forwardpass!(solver::iLQRSolver, J_prev)
         end
         iter += 1
         α /= 2.0
+        # println("J: $(J), z: $(z)")
     end
 
     if J > J_prev
@@ -185,7 +180,7 @@ function evaluate_convergence(solver::iLQRSolver, ilqr_iterations::Int, reg_flag
 
     # If the change in cost is small, the gradient is small, and
     # the last step was not a regularization step, we have converged
-    if ((0.0 <= dJ < solver.opts.cost_tolerance) && (grad < solver.opts.gradient_tolerance)
+    if ((0.0 <= dJ < solver.opts.ilqr_ctol) && (grad < solver.opts.ilqr_gtol)
         && !reg_flag)
         @logmsg InnerLoop "Cost criteria satisfied."
         solver.stats.status = SOLVE_SUCCEEDED
@@ -201,7 +196,7 @@ function evaluate_convergence(solver::iLQRSolver, ilqr_iterations::Int, reg_flag
 
     # Exit iLQR and continue solving if the maximum number of iLQR iterations
     # has been reached.
-    if ilqr_iterations >= solver.opts.iterations_inner
+    if ilqr_iterations >= solver.opts.ilqr_max_iterations
         return true
     end
 

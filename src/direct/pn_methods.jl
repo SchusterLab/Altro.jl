@@ -1,250 +1,233 @@
+"""
+pn_methods.jl
+"""
+
 function solve!(solver::ProjectedNewtonSolver)
-    reset!(solver)
-
-    update_constraints!(solver)
-    copy_constraints!(solver)
-    copy_multipliers!(solver)
-    constraint_jacobian!(solver)
-    copy_jacobians!(solver)
-    TO.cost_expansion!(solver)
-    TO.update_active_set!(solver; tol=solver.opts.active_set_tolerance_pn)
-    copy_active_set!(solver)
-
+    # initialize
     if solver.opts.verbose_pn
         println("\nProjection:")
     end
-    viol = projection_solve!(solver)
-    # copyto!(solver.Z, solver.P)
-
-    # Copy the multipliers back to the ALConSet
-    copyback_multipliers!(solver.λ, solver)
-
-    terminate!(solver)
-    return solver
-end
-
-function projection_solve!(solver::ProjectedNewtonSolver)
-    ϵ_feas = solver.opts.constraint_tolerance
-    viol = norm(solver.d[solver.active_set], Inf)
-    max_projection_iters = solver.opts.n_steps
-
-    count = 0
-    while count < max_projection_iters && viol > ϵ_feas
+    ϵ_feas = solver.opts.pn_vtol
+    # compute value and jacobian of all constraints
+    evaluate_copy_constraints!(solver, solver.X, solver.U)
+    viol = norm(solver.d[solver.a], Inf)
+    # run solve
+    step_count = 0
+    while (step_count < solver.opts.n_steps) && (viol > ϵ_feas)
         viol = _projection_solve!(solver)
         if solver.opts.multiplier_projection
             res = multiplier_projection!(solver)
         else
             res = Inf
         end
-        count += 1
-        record_iteration!(solver, viol, res)
+        step_count += 1
+        # compute cost
+        J = 0.
+        for k = 1:solver.N
+            J += TO.cost(solver.obj, solver.X, solver.U, k)
+        end
+        J_prev = solver.stats.cost[solver.stats.iterations]
+        dJ = J_prev - J
+        # log
+        record_iteration!(solver.stats, cost=J, c_max=viol, is_pn=true,
+                          dJ=dJ, gradient=res, penalty_max=NaN)
     end
-    return viol
-end
-
-function record_iteration!(solver::ProjectedNewtonSolver, viol, res)
-    J = TO.cost(solver)
-    J_prev = solver.stats.cost[solver.stats.iterations]
-    record_iteration!(solver.stats, cost=TO.cost(solver), c_max=viol, is_pn=true,
-        dJ=J_prev-J, gradient=res, penalty_max=NaN)
+    # terminate
+    terminate!(solver)
+    return solver
 end
 
 function _projection_solve!(solver::ProjectedNewtonSolver)
-    Z = primals(solver)
-    a = solver.active_set
+    # initialize
     max_refinements = 10
     convergence_rate_threshold = solver.opts.r_threshold
-
-    # regularization
     ρ_chol = solver.opts.ρ_chol
     ρ_primal = solver.opts.ρ_primal
-
-    # Assume constant, diagonal cost Hessian (for now)
+    # update constraints and derivatives c, D, d, λ, a
+    evaluate_copy_constraints!(solver, solver.X, solver.U)
+    D = solver.D[solver.a, :]
+    d = solver.d[solver.a]
+    # update costs and derivatives H, g
+    evaluate_copy_costs!(solver)
     H = Diagonal(solver.H)
-
-    # Update everything
-    update_constraints!(solver)
-    constraint_jacobian!(solver)
-    TO.update_active_set!(solver; tol=solver.opts.active_set_tolerance_pn)
-    TO.cost_expansion!(solver)
-
-    # Copy results from constraint sets to sparse arrays
-    copyto!(solver.P, solver.Z)
-    copy_constraints!(solver)
-    copy_jacobians!(solver)
-    copy_active_set!(solver)
-
-    # Get active constraints
-    D,d = active_constraints(solver)
-
-    viol0 = norm(d,Inf)
+    # check violation
+    viol0 = norm(d, Inf)
     if solver.opts.verbose_pn
         println("feas0: $viol0")
     end
-
+    # regularize Hessian
     if ρ_primal > 0.0
-        dim_primal = size(solver.P.Z)[1]
-        for i = 1:dim_primal
-            H[i,i] += ρ_primal
+        for i = 1:solver.N
+            H[i, i] += ρ_primal
         end
     end
-
-    HinvD = H\D'
-
-    S = Symmetric(D*HinvD)
-    Sreg = cholesky(S + ρ_chol*I) #TODO is this fast or slow? try above
+    # compute projection operators
+    HinvD = H \ D'
+    S = Symmetric(D * HinvD)
+    Sreg = cholesky(S + ρ_chol * I)
+    # line search until convergence
     viol_prev = viol0
-    count = 0
-    while count < max_refinements
-        viol = _projection_linesearch!(solver, (S,Sreg), HinvD)
+    refine_count = 0
+    while refine_count < max_refinements
+        # line search
+        viol = _projection_linesearch!(solver, (S, Sreg), HinvD)
+        # log conv rate
         convergence_rate = log10(viol) / log10(viol_prev)
         viol_prev = viol
-        count += 1
-
         if solver.opts.verbose_pn
             println("conv rate: $convergence_rate")
         end
-
-        if convergence_rate < convergence_rate_threshold ||
-                       viol < solver.opts.constraint_tolerance
+        # exit if converged
+        if ((convergence_rate < convergence_rate_threshold) ||
+            (viol < solver.opts.pn_vtol))
             break
         end
+        refine_count += 1
     end
-    copyto!(solver.Z, solver.P)
     return viol_prev
 end
 
-function _projection_linesearch!(solver::ProjectedNewtonSolver,
-        S, HinvD)
-    conSet = get_constraints(solver)
-    a = solver.active_set
-    d = solver.d[a]
-    viol0 = norm(d,Inf)
+function _projection_linesearch!(solver::ProjectedNewtonSolver, S, HinvD)
+    # initialize
     viol = Inf
-
-    P = solver.P
-    Z = solver.Z
-    P̄ = solver.P̄
-    Z̄ = solver.Z̄
-
     solve_tol = 1e-8
     refinement_iters = 25
-    α = 1.0
+    α = 1.
     ϕ = 0.5
+    viol_decreased = false
+    max_iter_count = 10
+    # grab variables
+    N = solver.N
+    convals = solver.convals
+    a = solver.a
+    d = solver.d[a]
+    viol0 = norm(d, Inf)
+    X = solver.X
+    X_tmp = solver.X_tmp
+    x_ginds = solver.x_ginds
+    U = solver.U
+    U_tmp = solver.U_tmp
+    u_ginds = solver.u_ginds
+    # run linesearch until violation decreases or
+    # maximum number of searches
     count = 1
     while true
         δλ = reg_solve(S[1], d, S[2], solve_tol, refinement_iters)
-        δZ = -HinvD*δλ
-        P̄.Z .= P.Z + α*δZ
-
-        copyto!(Z̄, P̄)
-        update_constraints!(solver, Z̄)
-        TO.max_violation!(conSet)
-        viol_ = maximum(conSet.c_max)
-        copy_constraints!(solver)
+        δZ = -HinvD * δλ
+        δZ .*= α
+        # build temporary trajectory from update
+        for k = 1:N - 1
+            solver.X_tmp[k] .= solver.X[k]
+            solver.X_tmp[k] .+= δZ[x_ginds[k]]
+            solver.U_tmp[k] .= solver.U[k]
+            solver.U_tmp[k] .+= δZ[u_ginds[k]]
+        end
+        solver.X_tmp[N] .= solver.X[N]
+        solver.X_tmp[N] .+= δZ[x_ginds[N]]
+        # check constraint violation
+        evaluate_copy_constraints!(solver, X_tmp, U_tmp)
+        max_violation, _ = TO.max_violation_penalty(convals)
         d = solver.d[a]
-        viol = norm(d,Inf)
-
+        viol = norm(d, Inf)
+        # log
         if solver.opts.verbose_pn
-            println("feas: ", viol, " (α = ", α, ")")
+            println("feas: $(viol) (α = $(α))")
         end
-        if viol < viol0 || count > 10
+        # evaluate convergence
+        if viol < viol0
+            viol_decreased = true
             break
-        else
-            count += 1
-            α *= ϕ
+        elseif count > max_iter_count
+            break
         end
+        count += 1
+        α *= ϕ
     end
-    copyto!(P.Z, P̄.Z)
-    # copyto!(solver.Z, P.Z)
+    # accept updated trajectory if the violation decreased
+    if viol_decreased
+        for k = 1:solver.N - 1
+            solver.X[k] .= solver.X_tmp[k]
+            solver.U[k] .= solver.U_tmp[k]
+        end
+        solver.X[N] .= solver.X_tmp[N]
+    end
     return viol
 end
 
-reg_solve(A, b, reg::Real, tol=1e-10, max_iters=10) = reg_solve(A, b, A + reg*I, tol, max_iters)
-function reg_solve(A, b, B, tol=1e-10, max_iters=10)
-    x = B\b
-    count = 0
-    while count < max_iters
-        r = b - A*x
-        # println("r_norm = $(norm(r))")
-
-        if norm(r) < tol
-            break
-        else
-            x += B\r
-            count += 1
-        end
-    end
-    # println("iters = $count")
-
-    return x
-end
-
-
-function active_constraints(solver::ProjectedNewtonSolver)
-    return solver.D[solver.active_set, :], solver.d[solver.active_set]  # this allocates
-end
-
-function TO.cost_expansion!(solver::ProjectedNewtonSolver)
-    Z = get_trajectory(solver)
-    E = solver.E
-    obj = get_objective(solver)
-    TO.cost_expansion!(E, obj, Z)
-
-    xinds, uinds = solver.P.xinds, solver.P.uinds
-    H = solver.H
-    g = solver.g
-    copy_expansion!(H, g, E, xinds, uinds)
-    return nothing
-end
-
-function copy_expansion!(H, g, E, xinds, uinds)
-    N = length(E)
-
-    for k = 1:N-1
-        H[xinds[k],xinds[k]] .= E[k].Q
-        H[uinds[k],uinds[k]] .= E[k].R
-        H[uinds[k],xinds[k]] .= E[k].H
-        g[xinds[k]] .= E[k].q
-        g[uinds[k]] .= E[k].r
-    end
-    H[xinds[N],xinds[N]] .= E[N].Q
-    g[xinds[N]] .= E[N].q
-    return nothing
-end
-
 function multiplier_projection!(solver::ProjectedNewtonSolver)
-    λ = solver.λ[solver.active_set]
-    D,d = active_constraints(solver)
+    D = solver.D[solver.a, :]
+    d = solver.d[solver.a]
+    λ = solver.λ[solver.a]
     g = solver.g
     res0 = g + D'λ
-    A = D*D'
-    Areg = A + I*solver.opts.ρ_primal
-    b = D*res0
+    A = D * D'
+    Areg = A + I * solver.opts.ρ_primal
+    b = D * res0
     δλ = -reg_solve(A, b, Areg)
     λ += δλ
     res = g + D'λ  # primal residual
     return norm(res)
 end
 
-
-function primal_residual(solver::ProjectedNewtonSolver, update::Bool=false)
-    if update
-        update_constraints!(solver)
-        copy_constraints!(solver)
-        TO.update_active_set!(solver; tol=solver.opts.active_set_tolerance_pn)
-        copy_active_set!(solver)
-        constraint_jacobian!(solver)
-        copy_jacobians!(solver)
-        TO.cost_expansion!(solver)
+function reg_solve(A, b, B, tol=1e-10, max_iters=10)
+    x = B \ b
+    count = 0
+    while count < max_iters
+        r = b - A * x
+        if norm(r) < tol
+            break
+        else
+            x += B \ r
+            count += 1
+        end
     end
-    λ = solver.λ[solver.active_set]
-    D,d = active_constraints(solver)
-    g = solver.g
-    return norm(D'λ + g)
+    return x
 end
 
-@inline copy_constraints!(solver::ProjectedNewtonSolver) = copy_constraints!(solver.d, solver)
-@inline copy_multipliers!(solver::ProjectedNewtonSolver) = copy_multipliers!(solver.λ, solver)
-@inline copy_jacobians!(solver::ProjectedNewtonSolver) = copy_jacobians!(solver.D, solver)
-@inline copy_active_set!(solver::ProjectedNewtonSolver) = copy_active_set!(solver.active_set, solver)
+"""
+compute the value and jacobian of all constraints along the specified
+trajectory, storing them in the proper linearized constraint
+"""
+function evaluate_copy_constraints!(solver::ProjectedNewtonSolver,
+                                    X::Vector{<:AbstractVector},
+                                    U::Vector{<:AbstractVector}; eval=true, jac=true,
+                                    override_const_jac=false)
+    for k = 1:solver.N
+        for conval in solver.convals[k]
+            # evaluate, active, copy
+            if eval
+                TO.evaluate!(conval.c, conval.con, X, U, k)
+                TO.update_active!(conval.a, conval.con, conval.c, conval.λ, 0.)
+                solver.d[conval.c_ginds] .= conval.c
+                solver.λ[conval.c_ginds] .= conval.λ
+                solver.a[conval.c_ginds] .= conval.a
+            end
+            # jacobian, copy
+            if jac && !conval.con.const_jac
+                TO.jacobian_copy!(solver.D, conval.con, X, U, k, conval.c_ginds, solver.x_ginds,
+                                  solver.u_ginds)
+            end
+        end
+    end
+    return nothing
+end
+
+function evaluate_copy_costs!(solver::ProjectedNewtonSolver)
+    H = solver.H
+    g = solver.g
+    E = solver.E
+    x_ginds = solver.x_ginds
+    u_ginds = solver.u_ginds
+    N = solver.N
+    for k = 1:N-1
+        TO.cost_derivatives!(E, solver.obj, solver.X, solver.U, k)
+        H[x_ginds[k], x_ginds[k]] .= E.Q
+        H[u_ginds[k], u_ginds[k]] .= E.R
+        H[u_ginds[k], x_ginds[k]] .= E.H
+        g[x_ginds[k]] .= E.q
+        g[u_ginds[k]] .= E.r
+    end
+    TO.cost_derivatives!(E, solver.obj, solver.X, solver.U, N)
+    H[x_ginds[N], x_ginds[N]] .= E.Q
+    g[x_ginds[N]] .= E.q
+end

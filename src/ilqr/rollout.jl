@@ -22,15 +22,15 @@ function rollout!(solver::iLQRSolver{IR}, α) where {IR}
         # handle feedforward
         dt = ts[k + 1] - ts[k]
         RobotDynamics.state_diff!(δx, solver.model, X_tmp[k], X[k])
-	δu .= d[k]
+	    δu .= d[k]
         δu .*= α
-	mul!(δu, K[k], δx, 1., 1.)
+	    mul!(δu, K[k], δx, 1., 1.)
         U_tmp[k] .= U[k]
         U_tmp[k] .+= δu
-        RobotDynamics.discrete_dynamics!(X_tmp[k + 1], IR, solver.model, X_tmp[k],
-                                         U_tmp[k], ts[k], dt)
+        RD.discrete_dynamics!(X_tmp[k + 1], IR, solver.model, X_tmp[k],
+                              U_tmp[k], ts[k], dt)
         # compute cost
-        J += TrajectoryOptimization.cost(solver.obj, k, X_tmp[k], U_tmp[k])
+        J += TO.cost(solver.obj, X_tmp, U_tmp, k)
         max_x = norm(X_tmp[k + 1], Inf)
         if max_x > solver.opts.max_state_value || isnan(max_x)
             solver.stats.status = STATE_LIMIT
@@ -42,15 +42,7 @@ function rollout!(solver::iLQRSolver{IR}, α) where {IR}
             return 0., true
         end
     end
-    J += TrajectoryOptimization.cost(solver.obj, N, X_tmp[N])
+    J += TO.cost(solver.obj, X_tmp, U_tmp, N)
     solver.stats.status = UNSOLVED
     return J, false
-end
-
-"Simulate the forward the dynamics open-loop"
-function rollout!(solver::iLQRSolver{<:Any,Q}) where Q
-    rollout!(Q, solver.model, solver.Z, solver.x0)
-    for k in eachindex(solver.Z)
-        solver.Z̄[k].t = solver.Z[k].t
-    end
 end
