@@ -19,6 +19,7 @@ struct ALTROSolver{T,S,Tp} <: ConstrainedSolver{T}
     stats::SolverStats{T}
     solver_al::AugmentedLagrangianSolver{T,S}
     solver_pn::Tp
+    solver_name::Symbol
 end
 
 function ALTROSolver(prob::Problem{IR,T,Tm,<:Any,Tx,Tix,Tu,Tiu,Tt,TE,TM,TMd,TV},
@@ -39,19 +40,18 @@ function ALTROSolver(prob::Problem{IR,T,Tm,<:Any,Tx,Tix,Tu,Tiu,Tt,TE,TM,TMd,TV},
     # put it all together
     S = typeof(solver_al.solver_uncon)
     Tp = typeof(solver_pn)
-    solver = ALTROSolver{T,S,Tp}(opts, stats, solver_al, solver_pn)
+    solver = ALTROSolver{T,S,Tp}(opts, stats, solver_al, solver_pn, :ALTRO)
     return solver
 end
 
 # methods
-# @inline states(solver::ALTROSolver) = solver.solver_pn.X
-# @inline controls(solver::ALTROSolver) = solver.solver_pn.U
-@inline solvername(solver::ALTROSolver) = :ALTRO
+@inline states(solver::ALTROSolver) = solver.solver_pn.X
+@inline controls(solver::ALTROSolver) = solver.solver_pn.U
+@inline max_violation_info(solver::ALTROSolver) = TO.max_violation_info(solver.solver_pn.convals)
 
 function reset!(solver::ALTROSolver)
-    reset!(solver.stats, solver.opts.iterations, :ALTRO)
+    reset!(solver.stats, solver.opts.iterations + 1, solver.solver_name)
     reset!(solver.solver_al)
-    # reset!(solver.solver_pn)
 end
 
 # solve
@@ -61,7 +61,6 @@ function solve!(solver::ALTROSolver)
     # solve with AL
     solve!(solver.solver_al)
 
-    println("status: $(status(solver))")
     if status(solver) <= SOLVE_SUCCEEDED
         # Check convergence
         i = solver.solver_al.stats.iterations

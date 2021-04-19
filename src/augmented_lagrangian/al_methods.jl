@@ -18,6 +18,14 @@ function solve!(solver::AugmentedLagrangianSolver{T,S}) where {T,S}
         J = solve!(solver.solver_uncon)
         # check solver status
         status(solver) > SOLVE_SUCCEEDED && break
+        # # BEGIN DEBUG
+        # conval = solver.solver_uncon.obj.convals[126][1]
+        # println("c")
+        # show_nice(conval.c)
+        # println("")
+        # TO.evaluate!(conval.c, conval.con, solver.solver_uncon.X, solver.solver_uncon.U,
+        #              126; log=true)
+        # # END DEBUG
         # record the updated information
         record_iteration!(solver, J, TO.max_violation_penalty(convals)...)
         # check for convergence before doing the outer loop udpate
@@ -48,7 +56,7 @@ function record_iteration!(solver::AugmentedLagrangianSolver{T,S},
     @logmsg OuterLoop :cost value=J
     @logmsg OuterLoop :c_max value=c_max
     if is_verbose(solver) 
-	print_level(OuterLoop, global_logger())
+	    print_level(OuterLoop, global_logger())
     end
     return nothing
 end

@@ -18,7 +18,7 @@ struct ProjectedNewtonSolver{T,Tm,To,Tx,Tix,Tu,Tiu,TH,Tg,TE,TD,Td} <: Constraine
     N::Int
     model::Tm
     obj::To
-    convals::Vector{Vector{ConVal}}
+    convals::Vector{Vector{TO.ConVal}}
     # trajectory
     X::Vector{Tx}
     X_tmp::Vector{Tx}
@@ -44,11 +44,11 @@ struct ProjectedNewtonSolver{T,Tm,To,Tx,Tix,Tu,Tiu,TH,Tg,TE,TD,Td} <: Constraine
     # misc
     opts::SolverOptions{T}
     stats::SolverStats{T}
+    solver_name::Symbol
 end
 
-function ProjectedNewtonSolver(prob::Problem{IR,T},
-                               opts::SolverOptions=SolverOptions(),
-                               stats::SolverStats=SolverStats()) where {IR,T}
+function ProjectedNewtonSolver(prob::Problem{IR,T}, opts::SolverOptions,
+                               stats::SolverStats) where {IR,T}
     n, m, N = size(prob)
     NZ = n * N + m * (N - 1)
     M = prob.M
@@ -85,15 +85,9 @@ function ProjectedNewtonSolver(prob::Problem{IR,T},
     Td = typeof(d)
     return ProjectedNewtonSolver{T,Tm,To,Tx,Tix,Tu,Tiu,TH,Tg,TE,TD,Td}(
         n, m, N, prob.model, prob.obj, prob.convals, prob.X, prob.X_tmp, x_ginds,
-        prob.U, prob.U_tmp, u_ginds, H, g, prob.E, D, d, λ, a, opts, stats
+        prob.U, prob.U_tmp, u_ginds, H, g, prob.E, D, d, λ, a, opts, stats, :ProjectedNewton
     )
 end
 
 # methods
 Base.size(solver::ProjectedNewtonSolver) = solver.n, solver.m, solver.N
-TO.get_model(solver::ProjectedNewtonSolver) = solver.model
-TO.get_constraints(solver::ProjectedNewtonSolver) = solver.prob.convals
-TO.get_objective(solver::ProjectedNewtonSolver) = solver.obj
-iterations(solver::ProjectedNewtonSolver) = solver.stats.iterations_pn
-get_active_set(solver::ProjectedNewtonSolver) = solver.a
-solvername(::Type{<:ProjectedNewtonSolver}) = :ProjectedNewton

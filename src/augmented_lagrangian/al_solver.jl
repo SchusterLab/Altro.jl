@@ -2,6 +2,8 @@
 al_solver.jl
 """
 
+import Base: show
+
 @doc raw""" ```julia
 struct AugmentedLagrangianSolver <: ConstrainedSolver{T}
 ```
@@ -34,6 +36,7 @@ struct AugmentedLagrangianSolver{T,S} <: ConstrainedSolver{T}
     opts::SolverOptions{T}
     stats::SolverStats{T}
     solver_uncon::S
+    solver_name::Symbol
 end
 
 
@@ -47,15 +50,20 @@ function AugmentedLagrangianSolver(prob::Problem{IR,T}, opts::SolverOptions,
     solver_uncon = solver_uncon(prob, opts, stats)
     # put it all together
     S = typeof(solver_uncon)
-    solver = AugmentedLagrangianSolver{T,S}(opts, stats, solver_uncon)
+    solver = AugmentedLagrangianSolver{T,S}(opts, stats, solver_uncon, :AugmentedLagrangian)
     reset!(solver)
     return solver
 end
 
-# methods
-solvername(::Type{<:AugmentedLagrangianSolver}) = :AugmentedLagrangian
-
 # options methods
+Base.show(io::IO, solver::AugmentedLagrangianSolver) = (
+    print(io, "ALSolver")
+)
+
+Base.show(io::IO, m::MIME"text/plain", solver::AugmentedLagrangianSolver) = (
+    print(io, "ALSolver")
+)
+
 function set_verbosity!(solver::AugmentedLagrangianSolver)
     llevel = log_level(solver) 
     if is_verbose(solver)
@@ -75,8 +83,6 @@ end
 
 
 function reset!(solver::AugmentedLagrangianSolver)
-    # reset stats
-    reset!(solver.stats, solver.opts.iterations, :AugmentedLagrangian)
     # reset duals and penalties
     for convals in solver.solver_uncon.obj.convals
         for conval in convals

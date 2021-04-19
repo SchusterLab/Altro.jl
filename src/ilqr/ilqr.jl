@@ -66,6 +66,7 @@ struct iLQRSolver{IR,Tm,To,Tix,Tiu,Txx,Tuu,Tuud,Tux,Tuxd,Txu,Tx,Tu,TD,TG,T
     opts::SolverOptions{T}
     stats::SolverStats{T}
     logger::SolverLogger
+    solver_name::Symbol
 end
 
 
@@ -120,26 +121,17 @@ function iLQRSolver(prob::Problem{IR,T}, opts::SolverOptions, stats::SolverStats
         prob.X_tmp, prob.U, prob.U_tmp, prob.ts,
         K, K_dense, d, D, A, B, G, prob.E, Qxx, Qxx_tmp, Quu, Quu_dense,
         Quu_reg, Qux, Qux_tmp, Qux_reg, Qx, Qu, P, P_tmp,
-        p, p_tmp, ΔV, ρ, dρ, grad, opts, stats, logger)
+        p, p_tmp, ΔV, ρ, dρ, grad, opts, stats, logger, :iLQR)
     reset!(solver)
     return solver
 end
 
 # methods
 Base.size(solver::iLQRSolver) = solver.n, solver.m, solver.N
-@inline TO.get_objective(solver::iLQRSolver) = solver.obj
-@inline TO.get_model(solver::iLQRSolver) = solver.model
-@inline get_initial_state(solver::iLQRSolver) = solver.X[1]
-@inline TO.integration(solver::iLQRSolver{QUAD}) where {QUAD} = QUAD
-solvername(::Type{<:iLQRSolver}) = :iLQR
-@inline TO.states(solver::iLQRSolver) = solver.X
-@inline TO.controls(solver::iLQRSolver) = solver.U
 
 log_level(::iLQRSolver) = InnerLoop
 
 function reset!(solver::iLQRSolver{T}) where T
-    # reset stats
-    reset!(solver.stats, solver.opts.iterations, :iLQR)
     # reset regularization
     solver.ρ[1] = 0.0
     solver.dρ[1] = 0.0

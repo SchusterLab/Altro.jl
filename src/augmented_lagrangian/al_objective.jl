@@ -2,9 +2,9 @@
 al_objective.jl
 """
 
-struct ALObjective{O<:Objective} <: AbstractObjective
+struct ALObjective{O<:Objective} <: TO.AbstractObjective
     obj::O
-    convals::Vector{Vector{ConVal}}
+    convals::Vector{Vector{TO.ConVal}}
 end
 
 # constructors
@@ -66,11 +66,10 @@ function TO.cost_derivatives!(E::QuadraticCost, obj::ALObjective, X::AbstractVec
         end
         # compute derivatives for augmented lagrangian
         p_tmp1 .= conval.μ
-        p_tmp1 .*= conval.a
+        p_tmp1 .*= conval.a # p_tmp1 Iμ
         p_tmp2 .= conval.c
         p_tmp2 .*= p_tmp1
         p_tmp2 .+= conval.λ # p_tmp2 = Iμ * c + λ
-        p_tmp1 .*= 2 # ptmp1 = 2 * Iμ
         tIμ = Diagonal(p_tmp1)
         if conval.con.state_expansion
             mul!(XP_tmp, Transpose(Cx), tIμ)
