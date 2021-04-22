@@ -50,7 +50,7 @@ end
 @inline max_violation_info(solver::ALTROSolver) = TO.max_violation_info(solver.solver_pn.convals)
 
 function reset!(solver::ALTROSolver)
-    reset!(solver.stats, solver.opts.iterations + 1, solver.solver_name)
+    reset!(solver.stats, solver.opts.iterations + solver.opts.n_steps + 1, solver.solver_name)
     reset!(solver.solver_al)
 end
 

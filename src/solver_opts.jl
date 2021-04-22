@@ -76,7 +76,7 @@ end
 
     # general options
     projected_newton::Bool = true
-    iterations::Int = 1000   # max number of iterations
+    iterations::Int = 10000   # max number of iterations
     show_summary::Bool = false
     verbose::Int = 0 
 end

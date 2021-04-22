@@ -79,10 +79,10 @@ function TO.cost_derivatives!(E::QuadraticCost, obj::ALObjective, X::AbstractVec
         if conval.con.control_expansion
             mul!(UP_tmp, Transpose(Cu), tIμ)
             mul!(E.R, UP_tmp, Cu, 1., 1.)
-            mul!(E.r, Trasponse(Cu), p_tmp2, 1., 1.)
+            mul!(E.r, Transpose(Cu), p_tmp2, 1., 1.)
         end
         if conval.con.coupled_expansion
-            mul!(UP_tmp, Transpose(Cu), Iμ)
+            mul!(UP_tmp, Transpose(Cu), tIμ)
             mul!(E.H, UP_tmp, Cx, 1., 1.)
         end
     end

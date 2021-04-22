@@ -39,23 +39,17 @@ function solve!(solver::iLQRSolver{IR}) where {IR}
             solver.U[k] .= solver.U_tmp[k]
         end
         solver.X[N] .= solver.X_tmp[N]
-        # record iteration and evaluate convergence
+        # record iteration
         dJ = abs(J - J_prev)
         J_prev = J
         gradient_todorov!(solver)
         record_iteration!(solver, J, dJ)
-        exit = evaluate_convergence(solver, i, reg_flag)
-        # print iteration
         if is_verbose(solver) 
             print_level(InnerLoop, global_logger())
         end
         # exit if converged
+        exit = evaluate_convergence(solver, i, reg_flag)
         exit && break
-        # exit if cost blew up
-        if J > solver.opts.max_cost_value
-            solver.stats.status = MAXIMUM_COST
-            break
-        end
     end
     terminate!(solver)
     return J
@@ -177,6 +171,7 @@ function evaluate_convergence(solver::iLQRSolver, ilqr_iterations::Int, reg_flag
     i = solver.stats.iterations
     grad = solver.stats.gradient[i]
     dJ = solver.stats.dJ[i]
+    J = solver.stats.cost[i]
 
     # If the change in cost is small, the gradient is small, and
     # the last step was not a regularization step, we have converged
@@ -204,6 +199,13 @@ function evaluate_convergence(solver::iLQRSolver, ilqr_iterations::Int, reg_flag
     if solver.stats.dJ_zero_counter > solver.opts.dJ_counter_limit
         @logmsg InnerLoop "dJ Counter hit max. Terminating."
         solver.stats.status = NO_PROGRESS
+        return true
+    end
+
+    # Terminate if max cost value was reached.
+    if J > solver.opts.max_cost_value
+        @logmsg InnerLoop "Hit max cost value. Terminating."
+        solver.stats.status = MAXIMUM_COST
         return true
     end
 
