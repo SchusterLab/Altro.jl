@@ -1,80 +1,60 @@
+"""
+Altro.jl
+"""
+
 module Altro
 
-import TrajectoryOptimization
-import RobotDynamics
-using StaticArrays
-using Parameters
-using DocStringExtensions
 using BenchmarkTools
-using Interpolations
-using UnsafeArrays
-using SolverLogging
 using Crayons
-
-using SparseArrays
+using DocStringExtensions
+using ForwardDiff
+using Interpolations
 using LinearAlgebra
 using Logging
+using Parameters
+using RecipesBase
+using SparseArrays
+using SolverLogging
+using StaticArrays
 using Statistics
-
-const TO = TrajectoryOptimization
-const RD = RobotDynamics
-
-import RobotDynamics: discrete_jacobian!, discrete_dynamics
+using UnsafeArrays
 
 include("utils.jl")
-# include("infeasible_model.jl")
+include("model.jl")
+include("integration.jl")
+include("costfunctions.jl")
+include("objective.jl")
+include("constraints.jl")
+include("constraint_list.jl")
+include("convals.jl")
+include("problem.jl")
 include("solvers.jl")
 include("solver_opts.jl")
-
 include("ilqr/ilqr.jl")
-include("ilqr/ilqr_solve.jl")
 include("ilqr/backwardpass.jl")
 include("ilqr/rollout.jl")
-include("augmented_lagrangian/al_solver.jl")
-include("augmented_lagrangian/al_objective.jl")
-include("augmented_lagrangian/al_methods.jl")
-include("direct/pn.jl")
-include("direct/pn_methods.jl")
-include("altro/altro_solver.jl")
+include("ilqr/ilqr_methods.jl")
+include("al/al.jl")
+include("al/al_methods.jl")
+include("al/al_objective.jl")
+include("pn/pn.jl")
+include("pn/pn_methods.jl")
+include("altro/altro.jl")
 
-using TrajectoryOptimization:
-    Problem,
-    ConstraintList,
-    AbstractObjective, Objective, QuadraticCost,
-    ConVal
-    # AbstractTrajectory,
-    # DynamicsExpansion, # TODO: Move to ALTRO
-    # ALConstraintSet,
-    # DynamicsConstraint,
-    # Traj,
-    # states, controls,
-
-
-using RobotDynamics:
-    AbstractModel,
-    QuadratureRule, Implicit, Explicit
-    # AbstractKnotPoint,
-    # state, control
-
-
-# types
 export
+    # solver
     ALTROSolver,
-    iLQRSolver,
-    AugmentedLagrangianSolver,
-    SolverStats,
-    SolverOptions
-
-export
-    solve!,
-    benchmark_solve!,
-    iterations,
-    set_options!,
-    status
-
-# # modules
-# export
-#     Problems
-
-
+    SolverStats, SolverOptions,
+    solve!, benchmark_solve!, states, controls,
+    # constraints
+    ConstraintList, add_constraint!,
+    GoalConstraint, BoundConstraint,
+    # problem
+    Problem,
+    # model
+    AbstractModel,
+    Explicit, RK4, RK3, RK2, Euler,
+    dynamics, discrete_dynamics, discrete_dynamics!, discrete_jacobian!,
+    # cost functions
+    Objective, LQRObjective
 end # module

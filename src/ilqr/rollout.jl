@@ -21,16 +21,16 @@ function rollout!(solver::iLQRSolver{IR}, α) where {IR}
     for k = 1:N-1
         # handle feedforward
         dt = ts[k + 1] - ts[k]
-        RobotDynamics.state_diff!(δx, solver.model, X_tmp[k], X[k])
+        state_diff!(δx, solver.model, X_tmp[k], X[k])
 	δu .= d[k]
         δu .*= α
 	mul!(δu, K[k], δx, 1., 1.)
         U_tmp[k] .= U[k]
         U_tmp[k] .+= δu
-        RD.discrete_dynamics!(X_tmp[k + 1], IR, solver.model, X_tmp[k],
+        discrete_dynamics!(X_tmp[k + 1], IR, solver.model, X_tmp[k],
                               U_tmp[k], ts[k], dt)
         # compute cost
-        J += TO.cost(solver.obj, X_tmp, U_tmp, k)
+        J += cost(solver.obj, X_tmp, U_tmp, k)
         max_x = norm(X_tmp[k + 1], Inf)
         if max_x > solver.opts.max_state_value || isnan(max_x)
             solver.stats.status = STATE_LIMIT
@@ -42,7 +42,7 @@ function rollout!(solver::iLQRSolver{IR}, α) where {IR}
             return 0., true
         end
     end
-    J += TO.cost(solver.obj, X_tmp, U_tmp, N)
+    J += cost(solver.obj, X_tmp, U_tmp, N)
     solver.stats.status = UNSOLVED
     return J, false
 end

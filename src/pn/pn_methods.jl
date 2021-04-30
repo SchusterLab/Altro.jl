@@ -24,7 +24,7 @@ function solve!(solver::ProjectedNewtonSolver)
         # compute cost
         J = 0.
         for k = 1:solver.N
-            J += TO.cost(solver.obj, solver.X, solver.U, k)
+            J += cost(solver.obj, solver.X, solver.U, k)
         end
         J_prev = solver.stats.cost[solver.stats.iterations]
         dJ = J_prev - J
@@ -126,7 +126,7 @@ function _projection_linesearch!(solver::ProjectedNewtonSolver, S, HinvD)
         solver.X_tmp[N] .+= δZ[x_ginds[N]]
         # check constraint violation
         evaluate_copy_constraints!(solver, X_tmp, U_tmp)
-        max_violation, _ = TO.max_violation_penalty(convals)
+        max_violation, _ = max_violation_penalty(convals)
         d = solver.d[a]
         viol = norm(d, Inf)
         # log
@@ -196,16 +196,16 @@ function evaluate_copy_constraints!(solver::ProjectedNewtonSolver,
         for conval in solver.convals[k]
             # evaluate, active, copy
             if eval
-                TO.evaluate!(conval.c, conval.con, X, U, k)
-                TO.update_active!(conval.a, conval.con, conval.c, conval.λ, 0.)
+                evaluate!(conval.c, conval.con, X, U, k)
+                update_active!(conval.a, conval.con, conval.c, conval.λ, 0.)
                 solver.d[conval.c_ginds] .= conval.c
                 solver.λ[conval.c_ginds] .= conval.λ
                 solver.a[conval.c_ginds] .= conval.a
             end
             # jacobian, copy
             if jac && !conval.con.const_jac
-                TO.jacobian_copy!(solver.D, conval.con, X, U, k, conval.c_ginds, solver.x_ginds,
-                                  solver.u_ginds)
+                jacobian_copy!(solver.D, conval.con, X, U, k, conval.c_ginds, solver.x_ginds,
+                               solver.u_ginds)
             end
         end
     end
@@ -220,14 +220,14 @@ function evaluate_copy_costs!(solver::ProjectedNewtonSolver)
     u_ginds = solver.u_ginds
     N = solver.N
     for k = 1:N-1
-        TO.cost_derivatives!(E, solver.obj, solver.X, solver.U, k)
+        cost_derivatives!(E, solver.obj, solver.X, solver.U, k)
         H[x_ginds[k], x_ginds[k]] .= E.Q
         H[u_ginds[k], u_ginds[k]] .= E.R
         H[u_ginds[k], x_ginds[k]] .= E.H
         g[x_ginds[k]] .= E.q
         g[u_ginds[k]] .= E.r
     end
-    TO.cost_derivatives!(E, solver.obj, solver.X, solver.U, N)
+    cost_derivatives!(E, solver.obj, solver.X, solver.U, N)
     H[x_ginds[N], x_ginds[N]] .= E.Q
     g[x_ginds[N]] .= E.q
 end

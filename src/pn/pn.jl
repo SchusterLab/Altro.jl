@@ -18,7 +18,7 @@ struct ProjectedNewtonSolver{T,Tm,To,Tx,Tix,Tu,Tiu,TH,Tg,TE,TD,Td} <: Constraine
     N::Int
     model::Tm
     obj::To
-    convals::Vector{Vector{TO.ConVal}}
+    convals::Vector{Vector{ConVal}}
     # trajectory
     X::Vector{Tx}
     X_tmp::Vector{Tx}

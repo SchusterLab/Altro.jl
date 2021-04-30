@@ -47,7 +47,7 @@ end
 # methods
 @inline states(solver::ALTROSolver) = solver.solver_pn.X
 @inline controls(solver::ALTROSolver) = solver.solver_pn.U
-@inline max_violation_info(solver::ALTROSolver) = TO.max_violation_info(solver.solver_pn.convals)
+@inline max_violation_info(solver::ALTROSolver) = max_violation_info(solver.solver_pn.convals)
 
 function reset!(solver::ALTROSolver)
     reset!(solver.stats, solver.opts.iterations + solver.opts.n_steps + 1, solver.solver_name)
@@ -71,7 +71,7 @@ function solve!(solver::ALTROSolver)
         # Back-up check
         if status(solver) <= SOLVE_SUCCEEDED 
             # TODO: improve this check
-            if TO.max_violation_penalty(solver.solver_pn.convals)[1] < solver.opts.pn_vtol
+            if max_violation_penalty(solver.solver_pn.convals)[1] < solver.opts.pn_vtol
                 solver.stats.status = SOLVE_SUCCEEDED
             end
         end

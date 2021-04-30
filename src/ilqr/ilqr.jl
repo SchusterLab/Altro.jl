@@ -2,10 +2,7 @@
 ilqr.jl
 """
 
-using TrajectoryOptimization
-const TO = TrajectoryOptimization
-
-struct iLQRSolver{IR,Tm,To,Tix,Tiu,Txx,Tuu,Tuud,Tux,Tuxd,Txu,Tx,Tu,TD,TG,T
+struct iLQRSolver{IR,Tm,To,Tix,Tiu,Txx,Tuu,Tuud,Tux,Tuxd,Txu,Tx,Tu,TG,T
                   } <: UnconstrainedSolver{T}
     # problem info
     n::Int
@@ -30,8 +27,6 @@ struct iLQRSolver{IR,Tm,To,Tix,Tiu,Txx,Tuu,Tuud,Tux,Tuxd,Txu,Tx,Tu,TD,TG,T
     # feedforward gains (m) x N
     d::Vector{Tu}
     # discrete dynamics jacobians
-    # block jacobian (n, n + m)
-    D::TD
     # w.r.t. state (n, n)
     A::Txx
     # w.r.t. control (n, m)
@@ -39,7 +34,7 @@ struct iLQRSolver{IR,Tm,To,Tix,Tiu,Txx,Tuu,Tuud,Tux,Tuxd,Txu,Tx,Tu,TD,TG,T
     # state difference jacobian (n̄, n)
     G::TG
     # quadratic expansion of obj
-    E::TO.QuadraticCost{Txx,Tuu,Tux,Tx,Tu,T}
+    E::QuadraticCost{Txx,Tuu,Tux,Tx,Tu,T}
     Qxx::Txx
     Qxx_tmp::Txx
     Quu::Tuu
@@ -72,14 +67,13 @@ end
 
 function iLQRSolver(prob::Problem{IR,T}, opts::SolverOptions, stats::SolverStats) where {IR,T}
     n, m, N = size(prob)
-    n̄ = RobotDynamics.state_diff_size(prob.model)
+    n̄ = state_diff_size(prob.model)
     M = prob.M
     Md = prob.Md
     V = prob.V
     K = [M(zeros(T, m, n̄)) for k = 1:N-1]
     K_dense = Md(zeros(T, m, n̄))
     d = [V(zeros(T, m)) for k = 1:N-1]
-    D = M(zeros(T, n, n + m))
     A = M(zeros(T, n, n))
     B = M(zeros(T, n, m))
     G = M(zeros(T, n̄, m))
@@ -114,12 +108,11 @@ function iLQRSolver(prob::Problem{IR,T}, opts::SolverOptions, stats::SolverStats
     Txu = typeof(B)
     Tx = typeof(Qx)
     Tu = typeof(Qu)
-    TD = typeof(D)
     TG = typeof(G)
-    solver = iLQRSolver{IR,Tm,To,Tix,Tiu,Txx,Tuu,Tuud,Tux,Tuxd,Txu,Tx,Tu,TD,TG,T}(
+    solver = iLQRSolver{IR,Tm,To,Tix,Tiu,Txx,Tuu,Tuud,Tux,Tuxd,Txu,Tx,Tu,TG,T}(
         prob.n, prob.m, prob.N, prob.model, prob.obj, prob.ix, prob.iu, prob.X,
         prob.X_tmp, prob.U, prob.U_tmp, prob.ts,
-        K, K_dense, d, D, A, B, G, prob.E, Qxx, Qxx_tmp, Quu, Quu_dense,
+        K, K_dense, d, A, B, G, prob.E, Qxx, Qxx_tmp, Quu, Quu_dense,
         Quu_reg, Qux, Qux_tmp, Qux_reg, Qx, Qu, P, P_tmp,
         p, p_tmp, ΔV, ρ, dρ, grad, opts, stats, logger, :iLQR)
     reset!(solver)

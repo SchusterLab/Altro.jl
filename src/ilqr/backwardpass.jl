@@ -19,7 +19,6 @@ function backwardpass!(solver::iLQRSolver{IR}) where {IR}
     K = solver.K
     K_dense = solver.K_dense
     d = solver.d
-    D = solver.D
     A = solver.A
     B = solver.B
     G = solver.G
@@ -42,7 +41,7 @@ function backwardpass!(solver::iLQRSolver{IR}) where {IR}
 
     # terminal (cost and action-value) expansions
     ΔV .= 0
-    TO.cost_derivatives!(E, solver.obj, X, U, N)
+    cost_derivatives!(E, solver.obj, X, U, N)
     P .= E.Q
     p .= E.q
 
@@ -50,8 +49,8 @@ function backwardpass!(solver::iLQRSolver{IR}) where {IR}
     while k > 0
 	# dynamics and cost expansions
         dt = ts[k + 1] - ts[k]
-	RD.discrete_jacobian!(D, A, B, IR, model, X[k], U[k], ts[k], dt, ix, iu)
-        TO.cost_derivatives!(E, solver.obj, X, U, k)
+	discrete_jacobian!(A, B, IR, model, X[k], U[k], ts[k], dt)
+        cost_derivatives!(E, solver.obj, X, U, k)
 
 	# action-value expansion
         _calc_Q!(Qxx, Qxx_tmp, Quu, Qux, Qux_tmp, Qx, Qu, E, A, B, P, p)
@@ -64,7 +63,7 @@ function backwardpass!(solver::iLQRSolver{IR}) where {IR}
             regularization_update!(solver, :increase)
             k = N-1
             ΔV .= 0
-            TO.cost_derivatives!(E, solver.obj, N, X[N])
+            cost_derivatives!(E, solver.obj, N, X[N])
             P .= E.Q
             p .= E.q
             continue
@@ -105,7 +104,7 @@ end
 
 function _calc_Q!(Qxx::AbstractMatrix, Qxx_tmp::AbstractMatrix, Quu::AbstractMatrix,
                   Qux::AbstractMatrix, Qux_tmp::AbstractMatrix, Qx::AbstractVector,
-                  Qu::AbstractVector, E::TO.QuadraticCost, A::AbstractMatrix, B::AbstractMatrix,
+                  Qu::AbstractVector, E::QuadraticCost, A::AbstractMatrix, B::AbstractMatrix,
                   P::AbstractMatrix, p::AbstractVector)
     # Qxx
     mul!(Qxx_tmp, Transpose(A), P)

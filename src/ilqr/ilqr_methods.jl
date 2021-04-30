@@ -18,11 +18,11 @@ function solve!(solver::iLQRSolver{IR}) where {IR}
     # initial rollout and cost calculation
     J = J_prev = 0.
     for k = 1:N-1
-        J_prev += TO.cost(solver.obj, X, U, k)
+        J_prev += cost(solver.obj, X, U, k)
         dt = ts[k + 1] - ts[k]
-        RobotDynamics.discrete_dynamics!(X[k + 1], IR, solver.model, X[k], U[k], ts[k], dt)
+        discrete_dynamics!(X[k + 1], IR, solver.model, X[k], U[k], ts[k], dt)
     end
-    J_prev += TO.cost(solver.obj, X, U, N)
+    J_prev += cost(solver.obj, X, U, N)
 
     # run iLQR iterations
     for i = 1:solver.opts.ilqr_max_iterations

@@ -17,12 +17,12 @@ function solve!(solver::AugmentedLagrangianSolver{T,S}) where {T,S}
         # solve the unconstrained problem
         J = solve!(solver.solver_uncon)
         # record the updated information
-        record_iteration!(solver, J, TO.max_violation_penalty(convals)...)
+        record_iteration!(solver, J, max_violation_penalty(convals)...)
         # exit if converged
         exit = evaluate_convergence(solver, i)
         exit && break
         # outer loop update
-        TO.update_dual_penalty!(convals)
+        update_dual_penalty!(convals)
         # reset verbosity level after it's modified
         set_verbosity!(solver)
         reset!(solver_uncon)
@@ -50,7 +50,7 @@ function evaluate_convergence(solver::AugmentedLagrangianSolver, al_iterations::
     end
     
     # exit if iLQR converged
-    if status(solver) > SOLVE_SUCCEEDED
+    if solver.stats.status > SOLVE_SUCCEEDED
         return true
     end
     
@@ -61,7 +61,7 @@ function record_iteration!(solver::AugmentedLagrangianSolver{T,S},
                            J::T, c_max::T, μ_max::T) where {T,S}
     # Just update constraint violation and max penalty
     record_iteration!(solver.stats, c_max=c_max, penalty_max=μ_max, is_outer=true)
-    vmax, vmax_info = TO.max_violation_info(solver.solver_uncon.obj.convals)
+    vmax, vmax_info = max_violation_info(solver.solver_uncon.obj.convals)
     j = solver.stats.iterations_outer::Int
     @logmsg OuterLoop :iter value=j
     @logmsg OuterLoop :total value=solver.stats.iterations

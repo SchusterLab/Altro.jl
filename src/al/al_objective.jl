@@ -2,9 +2,9 @@
 al_objective.jl
 """
 
-struct ALObjective{O<:Objective} <: TO.AbstractObjective
+struct ALObjective{O<:Objective} <: AbstractObjective
     obj::O
-    convals::Vector{Vector{TO.ConVal}}
+    convals::Vector{Vector{ConVal}}
 end
 
 # constructors
@@ -17,22 +17,20 @@ end
 Base.copy(obj::ALObjective{O}) where {O} = ALObjective{O}(copy(obj.obj),
                                                           copy(obj.convals))
 @inline Base.length(obj::ALObjective) = length(obj.obj)
-@inline RD.state_dim(obj::ALObjective) = RD.state_dim(obj.obj)
-@inline RD.control_dim(obj::ALObjective) = RD.control_dim(obj.obj)
 
 # evaluations
-function TO.cost(obj::ALObjective, X::AbstractVector, U::AbstractVector, k::Int)
+function cost(obj::ALObjective, X::AbstractVector, U::AbstractVector, k::Int)
     # compute value for cost functions
-    cost_ = TO.cost(obj.obj, X, U, k)
+    cost_ = cost(obj.obj, X, U, k)
     # compute value for constraints
     for conval in obj.convals[k]
         if conval.con.direct
             continue
         end
         # compute and store (in conval) value for constraint functions
-        TO.evaluate!(conval.c, conval.con, X, U, k)
+        evaluate!(conval.c, conval.con, X, U, k)
         # determine active constraints
-        TO.update_active!(conval.a, conval.con, conval.c, conval.λ, 0.)
+        update_active!(conval.a, conval.con, conval.c, conval.λ, 0.)
         # compute value for augmented lagrangian
         cost_ += conval.λ'conval.c
         # 1//2 * c' * I_μ * c
@@ -43,11 +41,11 @@ function TO.cost(obj::ALObjective, X::AbstractVector, U::AbstractVector, k::Int)
     return cost_
 end
 
-function TO.cost_derivatives!(E::QuadraticCost, obj::ALObjective, X::AbstractVector,
+function cost_derivatives!(E::QuadraticCost, obj::ALObjective, X::AbstractVector,
                               U::AbstractVector, k::Int)
     # compute derivatives for cost functions
     # ASSUMPTION: E is being overwritten in the below function
-    TO.cost_derivatives!(E, obj.obj, X, U, k)
+    cost_derivatives!(E, obj.obj, X, U, k)
     # compute derivatvies for constraints
     for conval in obj.convals[k]
         if conval.con.direct
@@ -62,7 +60,7 @@ function TO.cost_derivatives!(E::QuadraticCost, obj::ALObjective, X::AbstractVec
         # compute derivatives for constraint function
         # ASSUMPTION: jacobian! has already been called on the constraint
         if !conval.con.const_jac
-            TO.jacobian!(Cx, Cu, conval.con, x, u)
+            jacobian!(Cx, Cu, conval.con, x, u)
         end
         # compute derivatives for augmented lagrangian
         p_tmp1 .= conval.μ
