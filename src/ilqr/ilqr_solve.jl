@@ -97,7 +97,7 @@ function forwardpass!(solver::iLQRSolver, J_prev)
             continue
         end
         # update
-        expected = -α*(ΔV[1] + α*ΔV[2])
+        expected = -α * (ΔV[1] + α * ΔV[2])
         if expected > 0.0
             z  = (J_prev - J)/expected
         else
@@ -105,7 +105,6 @@ function forwardpass!(solver::iLQRSolver, J_prev)
         end
         iter += 1
         α /= 2.0
-        # println("J: $(J), z: $(z)")
     end
 
     if J > J_prev

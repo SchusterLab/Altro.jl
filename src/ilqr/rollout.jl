@@ -22,9 +22,9 @@ function rollout!(solver::iLQRSolver{IR}, α) where {IR}
         # handle feedforward
         dt = ts[k + 1] - ts[k]
         RobotDynamics.state_diff!(δx, solver.model, X_tmp[k], X[k])
-	    δu .= d[k]
+	δu .= d[k]
         δu .*= α
-	    mul!(δu, K[k], δx, 1., 1.)
+	mul!(δu, K[k], δx, 1., 1.)
         U_tmp[k] .= U[k]
         U_tmp[k] .+= δu
         RD.discrete_dynamics!(X_tmp[k + 1], IR, solver.model, X_tmp[k],

@@ -23,7 +23,7 @@ struct ALTROSolver{T,S,Tp} <: ConstrainedSolver{T}
 end
 
 function ALTROSolver(prob::Problem{IR,T,Tm,<:Any,Tx,Tix,Tu,Tiu,Tt,TE,TM,TMd,TV},
-                     opts::SolverOptions;
+                     opts::SolverOptions=SolverOptions(),
                      solver_uncon=iLQRSolver) where {IR,T,Tm,Tx,Tix,Tu,Tiu,Tt,TE,TM,TMd,TV}
     stats = SolverStats{T}(parent=:ALTRO)
     # make a new problem that references the old, but has ALObjective

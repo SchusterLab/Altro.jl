@@ -48,15 +48,15 @@ function backwardpass!(solver::iLQRSolver{IR}) where {IR}
 
     k = N-1
     while k > 0
-	    # dynamics and cost expansions
+	# dynamics and cost expansions
         dt = ts[k + 1] - ts[k]
-	    RD.discrete_jacobian!(D, A, B, IR, model, X[k], U[k], ts[k], dt, ix, iu)
+	RD.discrete_jacobian!(D, A, B, IR, model, X[k], U[k], ts[k], dt, ix, iu)
         TO.cost_derivatives!(E, solver.obj, X, U, k)
 
-	    # action-value expansion
+	# action-value expansion
         _calc_Q!(Qxx, Qxx_tmp, Quu, Qux, Qux_tmp, Qx, Qu, E, A, B, P, p)
 
-	    # regularization
+	# regularization
         reg_flag = _bp_reg!(Quu, Quu_reg, Qux, Qux_reg, A, B, solver.ρ[1], solver.opts.bp_reg_type)
         if solver.opts.bp_reg && reg_flag
             @warn "Backward pass regularized"
@@ -73,8 +73,8 @@ function backwardpass!(solver::iLQRSolver{IR}) where {IR}
         # gains
         _calc_gains!(K[k], K_dense, d[k], Quu_reg, Quu_dense, Qux_reg, Qu)
         
-	    # cost-to-go (using unregularized Quu and Qux)
-	    _calc_ctg!(ΔV, P, P_tmp, p, p_tmp, K[k], d[k], Qxx, Quu, Qux, Qx, Qu)
+	# cost-to-go (using unregularized Quu and Qux)
+	_calc_ctg!(ΔV, P, P_tmp, p, p_tmp, K[k], d[k], Qxx, Quu, Qux, Qx, Qu)
 
         k -= 1
     end
@@ -103,7 +103,10 @@ function _bp_reg!(Quu, Quu_reg, Qux, Qux_reg, A, B, ρ, type_)
     return reg_flag
 end
 
-function _calc_Q!(Qxx, Qxx_tmp, Quu, Qux, Qux_tmp, Qx, Qu, E, A, B, P, p)
+function _calc_Q!(Qxx::AbstractMatrix, Qxx_tmp::AbstractMatrix, Quu::AbstractMatrix,
+                  Qux::AbstractMatrix, Qux_tmp::AbstractMatrix, Qx::AbstractVector,
+                  Qu::AbstractVector, E::TO.QuadraticCost, A::AbstractMatrix, B::AbstractMatrix,
+                  P::AbstractMatrix, p::AbstractVector)
     # Qxx
     mul!(Qxx_tmp, Transpose(A), P)
     mul!(Qxx, Qxx_tmp, A)
@@ -131,16 +134,12 @@ function _calc_gains!(K::AbstractMatrix, K_dense::AbstractMatrix,
                       Qux::AbstractMatrix, Qu::AbstractVector)
     # compute cholesky decomp of Quu
     Quu_dense .= Quu
-    (_, info) = LAPACK.potrf!('U', Quu_dense)
-    if info > 0
-        println("potrf!(Quu_dense): $(info)")
-    end
+    LAPACK.potrf!('U', Quu_dense)
     # compute K
     K_dense .= Qux
     LAPACK.potrs!('U', Quu_dense, K_dense)
-    for i in eachindex(K_dense)
-        K[i] = -1 * K_dense[i]
-    end
+    K .= K_dense
+    K .*= -1
     # compute d
     d .= Qu
     LAPACK.potrs!('U', Quu_dense, d)
