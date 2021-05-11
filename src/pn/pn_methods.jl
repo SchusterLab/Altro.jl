@@ -197,7 +197,7 @@ function evaluate_copy_constraints!(solver::ProjectedNewtonSolver,
             # evaluate, active, copy
             if eval
                 evaluate!(conval.c, conval.con, X, U, k)
-                update_active!(conval.a, conval.con, conval.c, conval.λ, 0.)
+                update_active!(conval)
                 solver.d[conval.c_ginds] .= conval.c
                 solver.λ[conval.c_ginds] .= conval.λ
                 solver.a[conval.c_ginds] .= conval.a

@@ -30,7 +30,7 @@ function cost(obj::ALObjective, X::AbstractVector, U::AbstractVector, k::Int)
         # compute and store (in conval) value for constraint functions
         evaluate!(conval.c, conval.con, X, U, k)
         # determine active constraints
-        update_active!(conval.a, conval.con, conval.c, conval.λ, 0.)
+        update_active!(conval)
         # compute value for augmented lagrangian
         cost_ += conval.λ'conval.c
         # 1//2 * c' * I_μ * c

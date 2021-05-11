@@ -2,24 +2,12 @@
 convals.jl
 """
 
-mutable struct ConstraintParams{T}
-	ϕ::T  	    # penalty scaling parameter
-	μ0::T 	    # initial penalty parameter
-	μ_max::T    # max penalty parameter
-	λ_max::T    # max Lagrange multiplier
-end
-
-function ConstraintParams(ϕ::T1=10., μ0::T2=1., μ_max::T3=1e8, λ_max::T4=1e8) where {T1,T2,T3,T4}
-	T = promote_type(T1, T2, T3, T4)
-	return ConstraintParams{T}(T(ϕ), T(μ0), T(μ_max), T(λ_max))
-end
-
 """
 	ConVal{C,V,M,W}
 
 Holds information about a constraint
 """
-struct ConVal{C,Tc,Tic,T}
+struct ConVal{C,Tc,Tic}
     con::C
     # constraint function value
     c::Tc
@@ -32,32 +20,32 @@ struct ConVal{C,Tc,Tic,T}
     # index for this conval's `c` in
     # the global linearized constraint
     c_ginds::Tic
-    params::ConstraintParams{T}
 end
 
 # constructors
 function ConVal(con::C, n::Int, m::Int, c_ginds::Tic,
-                M, V, penalty_scaling::T, penalty_initial::T, penalty_max::T, dual_max::T
-                ) where {C,T,Tic,Tix,Tiu}
+                M, V) where {C,Tic}
     p = length(con)
     c = V(zeros(p))
     λ = V(zeros(p))
-    μ = V(fill(penalty_initial, p))
-    a = V(ones(Bool, p))
-    params = ConstraintParams(penalty_scaling, penalty_initial,
-                              penalty_max, dual_max)
+    μ = V(fill(con.params.μ0, p))
+    a = V(zeros(Bool, p))
     Tc = typeof(c)
-    return ConVal{C,Tc,Tic,T}(con, c, λ, μ, a, c_ginds, params)
+    return ConVal{C,Tc,Tic}(con, c, λ, μ, a, c_ginds)
 end
 
 # methods
-function update_active!(a::AbstractVector, con::AbstractConstraint,
-                        c::AbstractVector, λ::AbstractVector, tol::Real)
+function update_active!(conval::ConVal)
+    a = conval.a
+    c = conval.c
+    λ = conval.λ
+    a_tol = conval.con.params.a_tol
+    con = conval.con
     if con.sense == EQUALITY
         a.= true
     elseif con.sense == INEQUALITY
         for i = 1:length(a)
-            a[i] = ((c[i] >= tol) | (abs(λ[i]) > tol))
+            a[i] = ((c[i] >= a_tol) | (abs(λ[i]) > a_tol))
         end
     end
     return nothing
@@ -77,14 +65,14 @@ function update_dual_penalty!(convals::Vector{Vector{ConVal}})
     for (k, convals_) in enumerate(convals)
         for conval in convals_
             # update dual
-            λ_max = conval.params.λ_max
+            λ_max = conval.con.params.λ_max
             λ_min = conval.con.sense == EQUALITY ? -λ_max : zero(λ_max)
             for i in eachindex(conval.λ)
                 conval.λ[i] = clamp(conval.λ[i] + conval.μ[i] * conval.c[i], λ_min, λ_max)
             end
             # update penalty
             for i in eachindex(conval.μ)
-                conval.μ[i] = clamp(conval.params.ϕ * conval.μ[i], 0, conval.params.μ_max)
+                conval.μ[i] = clamp(conval.con.params.ϕ * conval.μ[i], 0, conval.con.params.μ_max)
             end
         end
     end
@@ -139,7 +127,7 @@ function convals_from_constraint_list(cons::ConstraintList)
                 c_ginds = cons.V((1:p) .+ c_gind)
                 c_gind += p
                 conval = ConVal(con, cons.n, cons.m, c_ginds,
-                                cons.M, cons.V, 0., 0., 0., 0.)
+                                cons.M, cons.V)
                 push!(convals_, conval)
             end
         end

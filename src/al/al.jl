@@ -86,12 +86,8 @@ function reset!(solver::AugmentedLagrangianSolver)
     # reset duals and penalties
     for convals in solver.solver_uncon.obj.convals
         for conval in convals
-            conval.params.ϕ = solver.opts.penalty_scaling
-            conval.params.μ0 = solver.opts.penalty_initial
-            conval.params.μ_max = solver.opts.penalty_max
-            conval.params.λ_max = solver.opts.dual_max
             conval.λ .= 0
-            conval.μ .= conval.params.μ0
+            conval.μ .= conval.con.params.μ0
             conval.a .= false
         end
     end

@@ -32,6 +32,25 @@ abstract type CoupledStateConstraint <: CoupledConstraint end
 "Only a function of controls at adjacent knotpoints"
 abstract type CoupledControlConstraint <: CoupledConstraint end
 
+mutable struct ConstraintParams{T}
+    # penalty scaling parameter
+	ϕ::T
+    # initial penalty parameter
+	μ0::T
+    # max penalty parameter
+	μ_max::T
+    # max Lagrange multiplier
+	λ_max::T
+    # active set tolerance
+    a_tol::T
+end
+
+function ConstraintParams(;ϕ::T=10., μ0::T=1., μ_max::T=1e8, λ_max::T=1e8, a_tol::T=0.) where {T}
+    return ConstraintParams{T}(ϕ, μ0, μ_max, λ_max, a_tol)
+end
+
+Base.eltype(::ConstraintParams{T}) where {T} = T
+
 """
 	GoalConstraint{P,T}
 
@@ -46,7 +65,7 @@ GoalConstraint(xf::AbstractVector, inds)
 where `xf` is an n-dimensional goal state. If `inds` is provided,
 only `xf[inds]` will be used.
 """
-struct GoalConstraint{Tx,Ti,Txp,Tup,Tp,Tpx,Tpu} <: StateConstraint
+struct GoalConstraint{Tx,Ti,Txp,Tup,Tp,Tpx,Tpu,T} <: StateConstraint
     n::Int
     m::Int
     # constraint length
@@ -69,10 +88,13 @@ struct GoalConstraint{Tx,Ti,Txp,Tup,Tp,Tpx,Tpu} <: StateConstraint
     coupled_expansion::Bool
     direct::Bool
     sense::ConstraintSense
+    params::ConstraintParams{T}
 end
 
 # constructors
-function GoalConstraint(n::Int, m::Int, xf::Tx, inds::Ti, M, V; direct::Bool=false) where {Tx,Ti}
+function GoalConstraint(n::Int, m::Int, xf::Tx, inds::Ti, M, V;
+                        direct::Bool=false,
+                        params::ConstraintParams{T}=ConstraintParams()) where {T,Tx,Ti}
     xf_ = xf[inds]
     p = length(inds)
     XP_tmp = M(zeros(n, p))
@@ -90,9 +112,9 @@ function GoalConstraint(n::Int, m::Int, xf::Tx, inds::Ti, M, V; direct::Bool=fal
     control_expansion = false
     coupled_expansion = false
     sense = EQUALITY
-    con = GoalConstraint{Tx,Ti,Txp,Tup,Tp,Tpx,Tpu}(
+    con = GoalConstraint{Tx,Ti,Txp,Tup,Tp,Tpx,Tpu,T}(
         n, m, p, xf_, inds, XP_tmp, UP_tmp, p_tmp, Cx, Cu, const_jac,
-        state_expansion, control_expansion, coupled_expansion, direct, sense
+        state_expansion, control_expansion, coupled_expansion, direct, sense, params
     )
     jacobian!(con.Cx, con.Cu, con, NULL_VEC, NULL_VEC, 0)
     return con
@@ -167,11 +189,14 @@ struct DynamicsConstraint{T,Tir,Tm,Tix,Tiu,Tx,Txx,Txu,Txz} <: CoupledConstraint
     const_jac::Bool
     direct::Bool
     sense::ConstraintSense
+    params::ConstraintParams{T}
 end
 
 # constructors
 function DynamicsConstraint(n::Int, m::Int, ir::Tir, model::Tm, ts::Vector{T},
-                            ix::Tix, iu::Tiu, M, V; direct::Bool=true) where {Tir,Tm,T,Tix,Tiu}
+                            ix::Tix, iu::Tiu, M, V;
+                            direct::Bool=true,
+                            params::ConstraintParams{T}=ConstraintParams()) where {Tir,Tm,T,Tix,Tiu}
     x_tmp = V(zeros(n))
     A = M(zeros(n, n))
     B = M(zeros(n, m))
@@ -183,7 +208,7 @@ function DynamicsConstraint(n::Int, m::Int, ir::Tir, model::Tm, ts::Vector{T},
     const_jac = false
     sense = EQUALITY
     con = DynamicsConstraint{T,Tir,Tm,Tix,Tiu,Tx,Txx,Txu,Txz}(
-        n, m, ir, model, ts, ix, iu, x_tmp, A, B, AB, const_jac, direct, sense
+        n, m, ir, model, ts, ix, iu, x_tmp, A, B, AB, const_jac, direct, sense, params
     )
     return con
 end
@@ -247,7 +272,7 @@ BoundConstraint(n, m; x_min, x_max, u_min, u_max)
 ```
 Any of the bounds can be ±∞. The bound can also be specifed as a single scalar, which applies the bound to all state/controls.
 """
-struct BoundConstraint{Tx,Tu,Tixu,Tixl,Tiuu,Tiul,Ti,Txp,Tup,Tp,Tpx,Tpu} <: StageConstraint
+struct BoundConstraint{Tx,Tu,Tixu,Tixl,Tiuu,Tiul,Ti,Txp,Tup,Tp,Tpx,Tpu,T} <: StageConstraint
     n::Int
     m::Int
     # constraint length
@@ -272,12 +297,14 @@ struct BoundConstraint{Tx,Tu,Tixu,Tixl,Tiuu,Tiul,Ti,Txp,Tup,Tp,Tpx,Tpu} <: Stage
     coupled_expansion::Bool
     direct::Bool
     sense::ConstraintSense
+    params::ConstraintParams{T}
 end
 
 # constructor
-function BoundConstraint(n::Int, m::Int, x_max::Tx, x_min::Tx,
-                         u_max::Tu, u_min::Tu, M, V; direct::Bool=false, checks=true) where {
-                             Tx<:AbstractVector,Tu<:AbstractVector}
+function BoundConstraint(
+    n::Int, m::Int, x_max::Tx, x_min::Tx, u_max::Tu, u_min::Tu, M, V; direct::Bool=false,
+    checks=true, params::ConstraintParams{T}=ConstraintParams()
+) where {T,Tx<:AbstractVector,Tu<:AbstractVector}
     if checks
         @assert all(x_max .>= x_min)
         @assert all(u_max .>= u_min)
@@ -338,10 +365,10 @@ function BoundConstraint(n::Int, m::Int, x_max::Tx, x_min::Tx,
     Tpx = typeof(Cx)
     Tpu = typeof(Cu)
     # construct
-    con = BoundConstraint{Tx,Tu,Tixu,Tixl,Tiuu,Tiul,Ti,Txp,Tup,Tp,Tpx,Tpu}(
+    con = BoundConstraint{Tx,Tu,Tixu,Tixl,Tiuu,Tiul,Ti,Txp,Tup,Tp,Tpx,Tpu,T}(
         n, m, p, x_max, x_min, u_max, u_min, x_max_inds, x_min_inds, u_max_inds,
         u_min_inds, inds, XP_tmp, UP_tmp, p_tmp, Cx, Cu, const_jac, state_expansion,
-        control_expansion, coupled_expansion, direct, sense
+        control_expansion, coupled_expansion, direct, sense, params
     )
     # initialize
     jacobian!(Cx, Cu, con, x_max, x_max, 0)
