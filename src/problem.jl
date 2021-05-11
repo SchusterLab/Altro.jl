@@ -71,10 +71,10 @@ function Problem(::Type{IR}, model::Tm, obj::To, constraints::ConstraintList,
     ix = V(1:n)
     iu = V((1:m) .+ n)
     # initial condition constraint for direct solve
-    initial_state_constraint = GoalConstraint(n, m, copy(X[1]), V(1:n), M, V; direct=true)
+    initial_state_constraint = GoalConstraint(copy(X[1]), V(1:n), n, m, M, V; direct=true)
     add_constraint!(constraints, initial_state_constraint, 1:1)
     # dynamics constraint for direct solve
-    dynamics_constraint = DynamicsConstraint(n, m, IR, model, ts, ix, iu, M, V)
+    dynamics_constraint = DynamicsConstraint(IR, model, ts, ix, iu, n, m, M, V)
     add_constraint!(constraints, dynamics_constraint, 2:N-1)
     # create convals from constraints
     convals = convals_from_constraint_list(constraints)

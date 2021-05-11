@@ -17,6 +17,11 @@ const NULL_VEC = Array{Float64,1}(undef, 0)
     INEQUALITY = 2
 end
 
+@enum ActionType begin
+    STATE = 1
+    CONTROL = 2
+end
+
 abstract type AbstractConstraint end
 
 "Only a function of states and controls at a single knotpoint"
@@ -92,7 +97,7 @@ struct GoalConstraint{Tx,Ti,Txp,Tup,Tp,Tpx,Tpu,T} <: StateConstraint
 end
 
 # constructors
-function GoalConstraint(n::Int, m::Int, xf::Tx, inds::Ti, M, V;
+function GoalConstraint(xf::Tx, inds::Ti, n::Int, m::Int, M, V;
                         direct::Bool=false,
                         params::ConstraintParams{T}=ConstraintParams()) where {T,Tx,Ti}
     xf_ = xf[inds]
@@ -193,8 +198,8 @@ struct DynamicsConstraint{T,Tir,Tm,Tix,Tiu,Tx,Txx,Txu,Txz} <: CoupledConstraint
 end
 
 # constructors
-function DynamicsConstraint(n::Int, m::Int, ir::Tir, model::Tm, ts::Vector{T},
-                            ix::Tix, iu::Tiu, M, V;
+function DynamicsConstraint(ir::Tir, model::Tm, ts::Vector{T},
+                            ix::Tix, iu::Tiu, n::Int, m::Int, M, V;
                             direct::Bool=true,
                             params::ConstraintParams{T}=ConstraintParams()) where {Tir,Tm,T,Tix,Tiu}
     x_tmp = V(zeros(n))
@@ -302,7 +307,7 @@ end
 
 # constructor
 function BoundConstraint(
-    n::Int, m::Int, x_max::Tx, x_min::Tx, u_max::Tu, u_min::Tu, M, V; direct::Bool=false,
+    x_max::Tx, x_min::Tx, u_max::Tu, u_min::Tu, n::Int, m::Int, M, V; direct::Bool=false,
     checks=true, params::ConstraintParams{T}=ConstraintParams()
 ) where {T,Tx<:AbstractVector,Tu<:AbstractVector}
     if checks
@@ -463,5 +468,141 @@ function max_violation_info(con::BoundConstraint, c::AbstractVector, k::Int)
             info_str = "BoundConstraint u_min[$j] k=$k"
         end
     end
+    return max_viol, info_str
+end
+
+"""
+NormBoundConstraint
+"""
+struct NormBoundConstraint{A,Ti,Txp,Tup,Tp,Tpx,Tpu,T} <: StageConstraint
+    n::Int
+    m::Int
+    inds::Ti
+    n_max::T
+    # constraint length
+    p::Int
+    XP_tmp::Txp
+    UP_tmp::Tup
+    p_tmp::Vector{Tp}
+    Cx::Tpx
+    Cu::Tpu
+    const_jac::Bool
+    state_expansion::Bool
+    control_expansion::Bool
+    coupled_expansion::Bool
+    direct::Bool
+    sense::ConstraintSense
+    params::ConstraintParams{T}
+end
+
+# constructor
+function NormBoundConstraint(
+    action_type::ActionType, inds::Ti, n_max::T, n::Int, m::Int, M, V;
+    direct::Bool=false, checks=true, params::ConstraintParams{T}=ConstraintParams()
+) where {Ti,T}
+    state_expansion = action_type == STATE ? true : false
+    control_expansion = action_type == CONTROL ? true : false
+    coupled_expansion = false
+    if checks
+        @assert n_max > 0
+        if action_type == STATE
+            @assert all(inds .<= n)
+        end
+        if action_type == CONTROL
+            @assert all(inds .<= m)
+        end
+    end
+    # tmps for jacobian!
+    p = 1
+    XP_tmp = M(zeros(n, p))
+    UP_tmp = M(zeros(m, p))
+    p_tmp = [V(zeros(p)), V(zeros(p))]
+    Cx = M(zeros(p, n))
+    Cu = M(zeros(p, m))
+    const_jac = false
+    sense = INEQUALITY
+    # types
+    Txp = typeof(XP_tmp)
+    Tup = typeof(UP_tmp)
+    Tp = typeof(p_tmp[1])
+    Tpx = typeof(Cx)
+    Tpu = typeof(Cu)
+    # construct
+    con = NormBoundConstraint{action_type,Ti,Txp,Tup,Tp,Tpx,Tpu,T}(
+        n, m, inds, n_max, p, XP_tmp, UP_tmp, p_tmp, Cx, Cu, const_jac, state_expansion,
+        control_expansion, coupled_expansion, direct, sense, params
+    )
+    return con
+end
+
+# evaluation
+function evaluate!(c::AbstractVector, con::NormBoundConstraint{STATE}, X::AbstractVector,
+                   U::AbstractVector, k::Int; log=false)
+    c[1] = -con.n_max
+    for i in con.inds
+        xi = X[k][i]
+        c[1] += xi^2
+    end
+    return nothing
+end
+
+function evaluate!(c::AbstractVector, con::NormBoundConstraint{CONTROL}, X::AbstractVector,
+                   U::AbstractVector, k::Int; log=false)
+    c[1] = -con.n_max
+    for i in con.inds
+        ui = U[k][i]
+        c[1] += ui^2
+    end
+    return nothing
+end
+
+function jacobian!(Cx::AbstractMatrix, Cu::AbstractMatrix, con::NormBoundConstraint{STATE},
+                   X::AbstractVector, U::AbstractVector, k::Int)
+    for i in con.inds
+        Cx[1, i] = 2 * X[k][i]
+    end
+    return nothing
+end
+
+function jacobian!(Cx::AbstractMatrix, Cu::AbstractMatrix, con::NormBoundConstraint{CONTROL},
+                   X::AbstractVector, U::AbstractVector, k::Int)
+    for i in con.inds
+        Cu[1, i] = 2 * U[k][i]
+    end
+    return nothing
+end
+
+function jacobian_copy!(D::AbstractMatrix, con::NormBoundConstraint{STATE},
+                        X::AbstractVector, U::AbstractVector, k::Int,
+                        c_ginds::AbstractVector, x_ginds::AbstractVector,
+                        u_ginds::AbstractVector)
+    for i in con.inds
+        D[c_ginds[1], x_ginds[k][i]] = 2 * X[k][i]
+    end
+    return nothing
+end
+
+function jacobian_copy!(D::AbstractMatrix, con::NormBoundConstraint{CONTROL},
+                        X::AbstractVector, U::AbstractVector, k::Int,
+                        c_ginds::AbstractVector, x_ginds::AbstractVector,
+                        u_ginds::AbstractVector)
+    for i in con.inds
+        D[c_ginds[1], u_ginds[k][i]] = 2 * U[k][i]
+    end
+    return nothing
+end
+
+# methods
+@inline Base.length(con::NormBoundConstraint) = con.p
+
+function max_violation_info(con::NormBoundConstraint{STATE}, c::AbstractVector, k::Int)
+    max_viol = c[1]
+    info_str = "NormBoundConstraint x[$(con.inds)]"
+    return max_viol, info_str
+end
+
+function max_violation_info(con::NormBoundConstraint{CONTROL}, c::AbstractVector, k::Int)
+    max_viol = c[1]
+    info_str = "NormBoundConstraint u[$(con.inds)]"
     return max_viol, info_str
 end

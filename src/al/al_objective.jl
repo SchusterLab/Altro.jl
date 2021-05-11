@@ -60,7 +60,7 @@ function cost_derivatives!(E::QuadraticCost, obj::ALObjective, X::AbstractVector
         # compute derivatives for constraint function
         # ASSUMPTION: jacobian! has already been called on the constraint
         if !conval.con.const_jac
-            jacobian!(Cx, Cu, conval.con, x, u)
+            jacobian!(Cx, Cu, conval.con, X, U, k)
         end
         # compute derivatives for augmented lagrangian
         p_tmp1 .= conval.μ

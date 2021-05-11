@@ -47,8 +47,8 @@ export
     SolverStats, SolverOptions,
     solve!, benchmark_solve!, states, controls,
     # constraints
-    ConstraintList, add_constraint!,
-    GoalConstraint, BoundConstraint,
+    ConstraintList, add_constraint!, ConstraintParams, STATE, CONTROL, EQUALITY, INEQUALITY,
+    GoalConstraint, BoundConstraint, NormBoundConstraint,
     # problem
     Problem,
     # model
