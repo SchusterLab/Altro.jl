@@ -380,18 +380,12 @@ function evaluate!(c::AbstractVector, con::BoundConstraint, X::AbstractVector,
                    U::AbstractVector, k::Int; log=false)
     for (i, j) in con.x_max_inds
         c[i] = X[k][j] - con.x_max[j]
-        # if k == 79 && log
-        #     println("c[$i]: $(c[i]), X[$k][$j]: $(X[k][j]), x_max[j]: $(con.x_max[j])")
-        # end
     end
     for (i, j) in con.u_max_inds
         c[i] = U[k][j] - con.u_max[j]
     end
     for (i, j) in con.x_min_inds
         c[i] = con.x_min[j] - X[k][j]
-        # if k == 79 && log
-        #     println("c[$i]: $(c[i]), X[$k][$j]: $(X[k][j]), x_min[j]: $(con.x_min[j])")
-        # end
     end
     for (i, j) in con.u_min_inds
         c[i] = con.u_min[j] - U[k][j]
