@@ -173,12 +173,12 @@ end
 """
 DynamicsConstraint - constraint for explicit dynamics
 """
-struct DynamicsConstraint{S,T,Tir,Tm,Tix,Tiu,Tx,Txx,Txu,Txz} <: CoupledConstraint{S}
+struct DynamicsConstraint{S,T,Tir,Tm,Tt,Tix,Tiu,Tx,Txx,Txu,Txz} <: CoupledConstraint{S}
     n::Int
     m::Int
     ir::Tir
     model::Tm
-    ts::Vector{T}
+    ts::Tt
     ix::Tix
     iu::Tiu
     # store for evaluate!
@@ -194,10 +194,9 @@ struct DynamicsConstraint{S,T,Tir,Tm,Tix,Tiu,Tx,Txx,Txu,Txz} <: CoupledConstrain
 end
 
 # constructors
-function DynamicsConstraint(ir::Tir, model::Tm, ts::Vector{T},
-                            ix::Tix, iu::Tiu, n::Int, m::Int, M, V;
-                            direct::Bool=true,
-                            params::ConstraintParams{T}=ConstraintParams()) where {Tir,Tm,T,Tix,Tiu}
+function DynamicsConstraint(
+    ir::Tir, model::Tm, ts::Tt, ix::Tix, iu::Tiu, n::Int, m::Int, M, V;
+    direct::Bool=true, params::ConstraintParams{T}=ConstraintParams()) where {Tir,Tm,Tt,T,Tix,Tiu}
     x_tmp = V(zeros(n))
     A = M(zeros(n, n))
     B = M(zeros(n, m))
@@ -208,7 +207,7 @@ function DynamicsConstraint(ir::Tir, model::Tm, ts::Vector{T},
     Txz = typeof(AB)
     const_jac = false
     sense = EQUALITY
-    con = DynamicsConstraint{sense,T,Tir,Tm,Tix,Tiu,Tx,Txx,Txu,Txz}(
+    con = DynamicsConstraint{sense,T,Tir,Tm,Tt,Tix,Tiu,Tx,Txx,Txu,Txz}(
         n, m, ir, model, ts, ix, iu, x_tmp, A, B, AB, const_jac, direct, params
     )
     return con
