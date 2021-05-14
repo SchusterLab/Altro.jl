@@ -136,10 +136,8 @@ end
 
 function jacobian!(Cx::AbstractMatrix, Cu::AbstractMatrix, con::GoalConstraint, X::AbstractVector,
                    U::AbstractVector, k::Int)
-    # ASSUMPTION: Cu .= 0
-    T = eltype(Cx)
     for (i, j) in enumerate(con.inds)
-	    Cx[i, j] = one(T)
+	    Cx[i, j] = 1.
     end
     return nothing
 end
@@ -148,7 +146,6 @@ function jacobian_copy!(D::AbstractMatrix, con::GoalConstraint,
                         X::AbstractVector, U::AbstractVector, k::Int,
                         c_ginds::AbstractVector, x_ginds::AbstractVector,
                         u_ginds::AbstractVector)
-    # ASSUMPTION: D[c_ginds, i] .= 0 for i ∉ x_ginds[k]
     for (i, j) in enumerate(con.inds)
         D[c_ginds[i], x_ginds[k][j]] = 1.
     end
