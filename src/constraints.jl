@@ -22,20 +22,22 @@ end
     CONTROL = 2
 end
 
-abstract type AbstractConstraint end
+abstract type AbstractConstraint{S} end
+
+@inline sense(con::AbstractConstraint{S}) where {S} = S
 
 "Only a function of states and controls at a single knotpoint"
-abstract type StageConstraint <: AbstractConstraint end
+abstract type StageConstraint{S} <: AbstractConstraint{S} end
 "Only a function of states at a single knotpoint"
-abstract type StateConstraint <: StageConstraint end
+abstract type StateConstraint{S} <: StageConstraint{S} end
 "Only a function of controls at a single knotpoint"
-abstract type ControlConstraint <: StageConstraint end
+abstract type ControlConstraint{S} <: StageConstraint{S} end
 "Only a function of states and controls at two adjacent knotpoints"
-abstract type CoupledConstraint <: AbstractConstraint end
+abstract type CoupledConstraint{S} <: AbstractConstraint{S} end
 "Only a function of states at adjacent knotpoints"
-abstract type CoupledStateConstraint <: CoupledConstraint end
+abstract type CoupledStateConstraint{S} <: CoupledConstraint{S} end
 "Only a function of controls at adjacent knotpoints"
-abstract type CoupledControlConstraint <: CoupledConstraint end
+abstract type CoupledControlConstraint{S} <: CoupledConstraint{S} end
 
 mutable struct ConstraintParams{T}
     # penalty scaling parameter
@@ -70,7 +72,7 @@ GoalConstraint(xf::AbstractVector, inds)
 where `xf` is an n-dimensional goal state. If `inds` is provided,
 only `xf[inds]` will be used.
 """
-struct GoalConstraint{Tx,Ti,Txp,Tup,Tp,Tpx,Tpu,T} <: StateConstraint
+struct GoalConstraint{S,Tx,Ti,Txp,Tup,Tp,Tpx,Tpu,T} <: StateConstraint{S}
     n::Int
     m::Int
     # constraint length
@@ -92,7 +94,6 @@ struct GoalConstraint{Tx,Ti,Txp,Tup,Tp,Tpx,Tpu,T} <: StateConstraint
     control_expansion::Bool
     coupled_expansion::Bool
     direct::Bool
-    sense::ConstraintSense
     params::ConstraintParams{T}
 end
 
@@ -100,7 +101,6 @@ end
 function GoalConstraint(xf::Tx, inds::Ti, n::Int, m::Int, M, V;
                         direct::Bool=false,
                         params::ConstraintParams{T}=ConstraintParams()) where {T,Tx,Ti}
-    xf_ = xf[inds]
     p = length(inds)
     XP_tmp = M(zeros(n, p))
     UP_tmp = M(zeros(n, p))
@@ -117,9 +117,9 @@ function GoalConstraint(xf::Tx, inds::Ti, n::Int, m::Int, M, V;
     control_expansion = false
     coupled_expansion = false
     sense = EQUALITY
-    con = GoalConstraint{Tx,Ti,Txp,Tup,Tp,Tpx,Tpu,T}(
-        n, m, p, xf_, inds, XP_tmp, UP_tmp, p_tmp, Cx, Cu, const_jac,
-        state_expansion, control_expansion, coupled_expansion, direct, sense, params
+    con = GoalConstraint{sense,Tx,Ti,Txp,Tup,Tp,Tpx,Tpu,T}(
+        n, m, p, xf, inds, XP_tmp, UP_tmp, p_tmp, Cx, Cu, const_jac,
+        state_expansion, control_expansion, coupled_expansion, direct, params
     )
     jacobian!(con.Cx, con.Cu, con, NULL_VEC, NULL_VEC, 0)
     return con
@@ -161,10 +161,10 @@ end
 function max_violation_info(con::GoalConstraint, c::AbstractVector, k::Int)
     max_viol = -Inf
     info_str = ""
-    for i in con.inds
+    for (i, j) in enumerate(con.inds)
         viol = abs(c[i])
         if viol > max_viol
-            info_str = "GoalConstraint x[$i] k=$k"
+            info_str = "GoalConstraint x[$j] k=$k"
             max_viol = viol
         end
     end
@@ -176,7 +176,7 @@ end
 """
 DynamicsConstraint - constraint for explicit dynamics
 """
-struct DynamicsConstraint{T,Tir,Tm,Tix,Tiu,Tx,Txx,Txu,Txz} <: CoupledConstraint
+struct DynamicsConstraint{S,T,Tir,Tm,Tix,Tiu,Tx,Txx,Txu,Txz} <: CoupledConstraint{S}
     n::Int
     m::Int
     ir::Tir
@@ -193,7 +193,6 @@ struct DynamicsConstraint{T,Tir,Tm,Tix,Tiu,Tx,Txx,Txu,Txz} <: CoupledConstraint
     # misc
     const_jac::Bool
     direct::Bool
-    sense::ConstraintSense
     params::ConstraintParams{T}
 end
 
@@ -212,8 +211,8 @@ function DynamicsConstraint(ir::Tir, model::Tm, ts::Vector{T},
     Txz = typeof(AB)
     const_jac = false
     sense = EQUALITY
-    con = DynamicsConstraint{T,Tir,Tm,Tix,Tiu,Tx,Txx,Txu,Txz}(
-        n, m, ir, model, ts, ix, iu, x_tmp, A, B, AB, const_jac, direct, sense, params
+    con = DynamicsConstraint{sense,T,Tir,Tm,Tix,Tiu,Tx,Txx,Txu,Txz}(
+        n, m, ir, model, ts, ix, iu, x_tmp, A, B, AB, const_jac, direct, params
     )
     return con
 end
@@ -277,7 +276,7 @@ BoundConstraint(n, m; x_min, x_max, u_min, u_max)
 ```
 Any of the bounds can be ±∞. The bound can also be specifed as a single scalar, which applies the bound to all state/controls.
 """
-struct BoundConstraint{Tx,Tu,Tixu,Tixl,Tiuu,Tiul,Ti,Txp,Tup,Tp,Tpx,Tpu,T} <: StageConstraint
+struct BoundConstraint{S,Tx,Tu,Tixu,Tixl,Tiuu,Tiul,Ti,Txp,Tup,Tp,Tpx,Tpu,T} <: StageConstraint{S}
     n::Int
     m::Int
     # constraint length
@@ -301,7 +300,6 @@ struct BoundConstraint{Tx,Tu,Tixu,Tixl,Tiuu,Tiul,Ti,Txp,Tup,Tp,Tpx,Tpu,T} <: Sta
     control_expansion::Bool
     coupled_expansion::Bool
     direct::Bool
-    sense::ConstraintSense
     params::ConstraintParams{T}
 end
 
@@ -370,10 +368,10 @@ function BoundConstraint(
     Tpx = typeof(Cx)
     Tpu = typeof(Cu)
     # construct
-    con = BoundConstraint{Tx,Tu,Tixu,Tixl,Tiuu,Tiul,Ti,Txp,Tup,Tp,Tpx,Tpu,T}(
+    con = BoundConstraint{sense,Tx,Tu,Tixu,Tixl,Tiuu,Tiul,Ti,Txp,Tup,Tp,Tpx,Tpu,T}(
         n, m, p, x_max, x_min, u_max, u_min, x_max_inds, x_min_inds, u_max_inds,
         u_min_inds, inds, XP_tmp, UP_tmp, p_tmp, Cx, Cu, const_jac, state_expansion,
-        control_expansion, coupled_expansion, direct, sense, params
+        control_expansion, coupled_expansion, direct, params
     )
     # initialize
     jacobian!(Cx, Cu, con, x_max, x_max, 0)
@@ -472,9 +470,9 @@ function max_violation_info(con::BoundConstraint, c::AbstractVector, k::Int)
 end
 
 """
-NormBoundConstraint
+NormConstraint
 """
-struct NormBoundConstraint{A,Ti,Txp,Tup,Tp,Tpx,Tpu,T} <: StageConstraint
+struct NormConstraint{S,A,Ti,Txp,Tup,Tp,Tpx,Tpu,T} <: StageConstraint{S}
     n::Int
     m::Int
     inds::Ti
@@ -491,20 +489,19 @@ struct NormBoundConstraint{A,Ti,Txp,Tup,Tp,Tpx,Tpu,T} <: StageConstraint
     control_expansion::Bool
     coupled_expansion::Bool
     direct::Bool
-    sense::ConstraintSense
     params::ConstraintParams{T}
 end
 
 # constructor
-function NormBoundConstraint(
-    action_type::ActionType, inds::Ti, n_max::T, n::Int, m::Int, M, V;
+function NormConstraint(
+    sense::ConstraintSense, action_type::ActionType, inds::Ti, n_max::T, n::Int, m::Int, M, V;
     direct::Bool=false, checks=true, params::ConstraintParams{T}=ConstraintParams()
 ) where {Ti,T}
     state_expansion = action_type == STATE ? true : false
     control_expansion = action_type == CONTROL ? true : false
     coupled_expansion = false
     if checks
-        @assert n_max > 0
+        @assert n_max >= 0
         if action_type == STATE
             @assert all(inds .<= n)
         end
@@ -520,7 +517,7 @@ function NormBoundConstraint(
     Cx = M(zeros(p, n))
     Cu = M(zeros(p, m))
     const_jac = false
-    sense = INEQUALITY
+    sense = EQUALITY
     # types
     Txp = typeof(XP_tmp)
     Tup = typeof(UP_tmp)
@@ -528,64 +525,62 @@ function NormBoundConstraint(
     Tpx = typeof(Cx)
     Tpu = typeof(Cu)
     # construct
-    con = NormBoundConstraint{action_type,Ti,Txp,Tup,Tp,Tpx,Tpu,T}(
+    con = NormConstraint{sense, action_type,Ti,Txp,Tup,Tp,Tpx,Tpu,T}(
         n, m, inds, n_max, p, XP_tmp, UP_tmp, p_tmp, Cx, Cu, const_jac, state_expansion,
-        control_expansion, coupled_expansion, direct, sense, params
+        control_expansion, coupled_expansion, direct, params
     )
     return con
 end
 
 # evaluation
-function evaluate!(c::AbstractVector, con::NormBoundConstraint{STATE}, X::AbstractVector,
-                   U::AbstractVector, k::Int; log=false)
+function evaluate!(c::AbstractVector, con::NormConstraint{S,STATE}, X::AbstractVector,
+                   U::AbstractVector, k::Int; log=false) where {S}
     c[1] = -con.n_max
     for i in con.inds
-        xi = X[k][i]
-        c[1] += xi^2
+        c[1] += X[k][i]^2
     end
     return nothing
 end
 
-function evaluate!(c::AbstractVector, con::NormBoundConstraint{CONTROL}, X::AbstractVector,
-                   U::AbstractVector, k::Int; log=false)
+function evaluate!(c::AbstractVector, con::NormConstraint{S,CONTROL}, X::AbstractVector,
+                   U::AbstractVector, k::Int; log=false) where {S}
     c[1] = -con.n_max
     for i in con.inds
-        ui = U[k][i]
-        c[1] += ui^2
+        c[1] += U[k][i]^2
     end
     return nothing
 end
 
-function jacobian!(Cx::AbstractMatrix, Cu::AbstractMatrix, con::NormBoundConstraint{STATE},
-                   X::AbstractVector, U::AbstractVector, k::Int)
+function jacobian!(Cx::AbstractMatrix, Cu::AbstractMatrix, con::NormConstraint{S,STATE},
+                   X::AbstractVector, U::AbstractVector, k::Int) where {S}
     for i in con.inds
         Cx[1, i] = 2 * X[k][i]
     end
     return nothing
 end
 
-function jacobian!(Cx::AbstractMatrix, Cu::AbstractMatrix, con::NormBoundConstraint{CONTROL},
-                   X::AbstractVector, U::AbstractVector, k::Int)
+function jacobian!(Cx::AbstractMatrix, Cu::AbstractMatrix, con::NormConstraint{S,CONTROL},
+                   X::AbstractVector, U::AbstractVector, k::Int) where {S}
     for i in con.inds
         Cu[1, i] = 2 * U[k][i]
     end
     return nothing
 end
 
-function jacobian_copy!(D::AbstractMatrix, con::NormBoundConstraint{STATE},
+function jacobian_copy!(D::AbstractMatrix, con::NormConstraint{S,STATE},
                         X::AbstractVector, U::AbstractVector, k::Int,
                         c_ginds::AbstractVector, x_ginds::AbstractVector,
-                        u_ginds::AbstractVector)
+                        u_ginds::AbstractVector) where {S}
     for i in con.inds
         D[c_ginds[1], x_ginds[k][i]] = 2 * X[k][i]
     end
     return nothing
 end
 
-function jacobian_copy!(D::AbstractMatrix, con::NormBoundConstraint{CONTROL},
+function jacobian_copy!(D::AbstractMatrix, con::NormConstraint{S,CONTROL},
                         X::AbstractVector, U::AbstractVector, k::Int,
                         c_ginds::AbstractVector, x_ginds::AbstractVector,
-                        u_ginds::AbstractVector)
+                        u_ginds::AbstractVector) where {S}
     for i in con.inds
         D[c_ginds[1], u_ginds[k][i]] = 2 * U[k][i]
     end
@@ -593,16 +588,16 @@ function jacobian_copy!(D::AbstractMatrix, con::NormBoundConstraint{CONTROL},
 end
 
 # methods
-@inline Base.length(con::NormBoundConstraint) = con.p
+@inline Base.length(con::NormConstraint) = con.p
 
-function max_violation_info(con::NormBoundConstraint{STATE}, c::AbstractVector, k::Int)
+function max_violation_info(con::NormConstraint{S,STATE}, c::AbstractVector, k::Int) where {S}
     max_viol = c[1]
-    info_str = "NormBoundConstraint x[$(con.inds)]"
+    info_str = "NormConstraint x[$(con.inds)]"
     return max_viol, info_str
 end
 
-function max_violation_info(con::NormBoundConstraint{CONTROL}, c::AbstractVector, k::Int)
+function max_violation_info(con::NormConstraint{CONTROL}, c::AbstractVector, k::Int)
     max_viol = c[1]
-    info_str = "NormBoundConstraint u[$(con.inds)]"
+    info_str = "NormConstraint u[$(con.inds)]"
     return max_viol, info_str
 end

@@ -48,7 +48,7 @@ export
     solve!, benchmark_solve!, states, controls,
     # constraints
     ConstraintList, add_constraint!, ConstraintParams, STATE, CONTROL, EQUALITY, INEQUALITY,
-    GoalConstraint, BoundConstraint, NormBoundConstraint,
+    GoalConstraint, BoundConstraint, NormConstraint,
     # problem
     Problem,
     # model

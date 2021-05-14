@@ -7,7 +7,7 @@ convals.jl
 
 Holds information about a constraint
 """
-struct ConVal{C,Tc,Tic}
+struct ConVal{S,C,Tc,Tic}
     con::C
     # constraint function value
     c::Tc
@@ -23,50 +23,50 @@ struct ConVal{C,Tc,Tic}
 end
 
 # constructors
-function ConVal(con::C, n::Int, m::Int, c_ginds::Tic,
-                M, V) where {C,Tic}
+function ConVal(con::AbstractConstraint{S}, n::Int, m::Int, c_ginds::Tic,
+                M, V) where {S,Tic}
     p = length(con)
     c = V(zeros(p))
     λ = V(zeros(p))
     μ = V(fill(con.params.μ0, p))
     a = V(zeros(Bool, p))
     Tc = typeof(c)
-    return ConVal{C,Tc,Tic}(con, c, λ, μ, a, c_ginds)
+    C = typeof(con)
+    return ConVal{S,C,Tc,Tic}(con, c, λ, μ, a, c_ginds)
 end
 
 # methods
-function update_active!(conval::ConVal)
+function update_active!(conval::ConVal{EQUALITY})
+    conval.a .= true
+    return nothing
+end
+
+function update_active!(conval::ConVal{INEQUALITY})
     a = conval.a
     c = conval.c
     λ = conval.λ
     a_tol = conval.con.params.a_tol
     con = conval.con
-    if con.sense == EQUALITY
-        a.= true
-    elseif con.sense == INEQUALITY
-        for i = 1:length(a)
-            a[i] = ((c[i] >= a_tol) | (abs(λ[i]) > a_tol))
-        end
+    for i = 1:length(a)
+        a[i] = ((c[i] >= a_tol) | (abs(λ[i]) > a_tol))
     end
     return nothing
 end
 
-function violation(con::AbstractConstraint, c::AbstractVector)
-    viol = 0.
-    if con.sense == EQUALITY
-        viol = norm(c, Inf)
-    elseif con.sense == INEQUALITY
-        viol = max(0., maximum(c))
-    end
-    return viol
-end
+@inline violation(con::AbstractConstraint{EQUALITY}, c::AbstractVector) = (
+    norm(c, Inf)    
+)
+
+@inline violation(con::AbstractConstraint{INEQUALITY}, c::AbstractVector) = (
+    max(0., maximum(c))    
+)
 
 function update_dual_penalty!(convals::Vector{Vector{ConVal}})
     for (k, convals_) in enumerate(convals)
         for conval in convals_
             # update dual
             λ_max = conval.con.params.λ_max
-            λ_min = conval.con.sense == EQUALITY ? -λ_max : zero(λ_max)
+            λ_min = sense(conval.con) == EQUALITY ? -λ_max : zero(λ_max)
             for i in eachindex(conval.λ)
                 conval.λ[i] = clamp(conval.λ[i] + conval.μ[i] * conval.c[i], λ_min, λ_max)
             end
