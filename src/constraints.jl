@@ -272,7 +272,7 @@ BoundConstraint(n, m; x_min, x_max, u_min, u_max)
 ```
 Any of the bounds can be ±∞. The bound can also be specifed as a single scalar, which applies the bound to all state/controls.
 """
-struct BoundConstraint{S,Tx,Tu,Tixu,Tixl,Tiuu,Tiul,Ti,Txp,Tup,Tp,Tpx,Tpu,T} <: StageConstraint{S}
+struct BoundConstraint{S,Tx,Tu,Tixu,Tixl,Tiuu,Tiul,Txp,Tup,Tp,Tpx,Tpu,T} <: StageConstraint{S}
     n::Int
     m::Int
     # constraint length
@@ -285,7 +285,6 @@ struct BoundConstraint{S,Tx,Tu,Tixu,Tixl,Tiuu,Tiul,Ti,Txp,Tup,Tp,Tpx,Tpu,T} <: S
     x_min_inds::Tixl
     u_max_inds::Tiuu
     u_min_inds::Tiul
-    inds::Ti
     XP_tmp::Txp
     UP_tmp::Tup
     p_tmp::Vector{Tp}
@@ -308,43 +307,26 @@ function BoundConstraint(
         @assert all(x_max .>= x_min)
         @assert all(u_max .>= u_min)
     end
-    # TODO: the construction for these indices can be done in a less
-    # disgusting way by finding all finite among x_max, u_max, etc. individually
-    # get constraint indices
-    b = V([-x_max; -u_max; x_min; u_min])
-    inds = V(findall(isfinite, b))
-    # indices for evaluation (constraint ind, vector ind)
-    state_expansion = control_expansion = false
-    x_max_inds = Tuple{Int,Int}[]
-    x_min_inds = Tuple{Int,Int}[]
-    u_max_inds = Tuple{Int,Int}[]
-    u_min_inds = Tuple{Int,Int}[]
-    for (c_ind, z_ind) in enumerate(inds)
-        if z_ind <= n
-            state_expansion = true
-            x_ind = z_ind
-            insert!(x_max_inds, length(x_max_inds) + 1, (c_ind, x_ind))
-        elseif n < z_ind <= n + m
-            control_expansion = true
-            u_ind = z_ind - n
-            insert!(u_max_inds, length(u_max_inds) + 1, (c_ind, u_ind))
-        elseif n + m < z_ind <= n + m + n
-            state_expansion = true
-            x_ind = z_ind - n - m
-            insert!(x_min_inds, length(x_min_inds) + 1, (c_ind, x_ind))
-        else # nm + n < i
-            control_expansion = true
-            u_ind = z_ind - n - m - n
-            insert!(u_min_inds, length(u_min_inds) + 1, (c_ind, u_ind))
-        end
-    end
-    x_max_inds = V(x_max_inds)
-    x_min_inds = V(x_min_inds)
-    u_max_inds = V(u_max_inds)
-    u_min_inds = V(u_min_inds)
+    x_max_finite_inds = findall(isfinite, x_max)
+    x_max_c_inds = 1:length(x_max_finite_inds)
+    x_max_inds = V([(i, j) for (i, j) in zip(x_max_c_inds, x_max_finite_inds)])
+    p = length(x_max_inds)
+    x_min_finite_inds = findall(isfinite, x_min)
+    x_min_c_inds = p .+ (1:length(x_min_finite_inds))
+    x_min_inds = V([(i, j) for (i, j) in zip(x_min_c_inds, x_min_finite_inds)])
+    p += length(x_min_inds)
+    u_max_finite_inds = findall(isfinite, u_max)
+    u_max_c_inds = p .+ (1:length(u_max_finite_inds))
+    u_max_inds = V([(i, j) for (i, j) in zip(u_max_c_inds, u_max_finite_inds)])
+    p += length(u_max_inds)
+    u_min_finite_inds = findall(isfinite, u_min)
+    u_min_c_inds = p .+ (1:length(u_min_finite_inds))
+    u_min_inds = V([(i, j) for (i, j) in zip(u_min_c_inds, u_min_finite_inds)])
+    p += length(u_min_inds)
+    state_expansion = (length(x_max_inds) + length(x_min_inds)) > 0
+    control_expansion = (length(u_max_inds) + length(u_min_inds)) > 0
     coupled_expansion = state_expansion && control_expansion
     # tmps for jacobian!
-    p = length(inds)
     XP_tmp = M(zeros(n, p))
     UP_tmp = M(zeros(m, p))
     p_tmp = [V(zeros(p)), V(zeros(p))]
@@ -357,16 +339,15 @@ function BoundConstraint(
     Tixl = typeof(x_min_inds)
     Tiuu = typeof(u_max_inds)
     Tiul = typeof(u_min_inds)
-    Ti = typeof(inds)
     Txp = typeof(XP_tmp)
     Tup = typeof(UP_tmp)
     Tp = typeof(p_tmp[1])
     Tpx = typeof(Cx)
     Tpu = typeof(Cu)
     # construct
-    con = BoundConstraint{sense,Tx,Tu,Tixu,Tixl,Tiuu,Tiul,Ti,Txp,Tup,Tp,Tpx,Tpu,T}(
+    con = BoundConstraint{sense,Tx,Tu,Tixu,Tixl,Tiuu,Tiul,Txp,Tup,Tp,Tpx,Tpu,T}(
         n, m, p, x_max, x_min, u_max, u_min, x_max_inds, x_min_inds, u_max_inds,
-        u_min_inds, inds, XP_tmp, UP_tmp, p_tmp, Cx, Cu, const_jac, state_expansion,
+        u_min_inds, XP_tmp, UP_tmp, p_tmp, Cx, Cu, const_jac, state_expansion,
         control_expansion, coupled_expansion, direct, params
     )
     # initialize
@@ -397,11 +378,11 @@ function jacobian!(Cx::AbstractMatrix, Cu::AbstractMatrix, con::BoundConstraint,
     for (i, j) in con.x_max_inds
         Cx[i, j] = 1.
     end
-    for (i, j) in con.u_max_inds
-        Cu[i, j] = 1.
-    end
     for (i, j) in con.x_min_inds
         Cx[i, j] = -1.
+    end
+    for (i, j) in con.u_max_inds
+        Cu[i, j] = 1.
     end
     for (i, j) in con.u_min_inds
         Cu[i, j] = -1.
@@ -416,11 +397,11 @@ function jacobian_copy!(D::AbstractMatrix, con::BoundConstraint,
     for (i, j) in con.x_max_inds
         D[c_ginds[i], x_ginds[k][j]] = 1.
     end
-    for (i, j) in con.u_max_inds
-        D[c_ginds[i], u_ginds[k][j]] = 1.
-    end
     for (i, j) in con.x_min_inds
         D[c_ginds[i], x_ginds[k][j]] = -1.
+    end
+    for (i, j) in con.u_max_inds
+        D[c_ginds[i], u_ginds[k][j]] = 1.
     end
     for (i, j) in con.u_min_inds
         D[c_ginds[i], u_ginds[k][j]] = -1.
